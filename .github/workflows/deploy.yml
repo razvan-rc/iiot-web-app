@@ -16,6 +16,7 @@ jobs:
         host: ${{ secrets.WEB_SERVER }}
         username: ubuntu
         key: ${{ secrets.SSH_PRIVATE_KEY }}
+        passphrase: ${{ secrets.SSH_PASSPHRASE }}
         script: |
           cd /var/www/industrial_app
           git pull origin main
