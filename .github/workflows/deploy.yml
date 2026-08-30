@@ -13,7 +13,7 @@ jobs:
     - name: Execute deployment commands via SSH
       uses: appleboy/ssh-action@v1.0.0
       with:
-        host: ${{ secrets.WEB_SERVER }}
+        host: ${{ secrets.SERVER_HOST }}
         username: ubuntu
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         passphrase: ${{ secrets.SSH_PASSPHRASE }}
