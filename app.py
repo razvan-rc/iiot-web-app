@@ -21,16 +21,10 @@ def index():
 
 @app.route('/api/live')
 def api_live():
-    """
-    Acest endpoint returneaza cea mai recenta stare pentru FIECARE statie.
-    Folosim o functie Window (ROW_NUMBER) pentru a extrage instantaneu ultimul JSON.
-    """
-    conn = get_db_connection()
-    latest_data = {}
-    
     try:
+        conn = get_db_connection()
+        latest_data = {}
         with conn.cursor() as cursor:
-            # Query avansat pentru a lua doar ultima inregistrare per statie
             sql = """
                 SELECT station_name, payload_json 
                 FROM (
@@ -43,19 +37,15 @@ def api_live():
             cursor.execute(sql)
             results = cursor.fetchall()
 
-            # Parsam string-urile JSON din baza de date intr-un dictionar Python
             for row in results:
-                station = row['station_name']
-                # MariaDB returneaza JSON-ul ca string, trebuie sa-l facem obiect
-                latest_data[station] = json.loads(row['payload_json'])
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
+                latest_data[row['station_name']] = json.loads(row['payload_json'])
+        
         conn.close()
-
-    # Flask va transforma acest dictionar automat inapoi in JSON pentru frontend
-    return jsonify(latest_data)
+        return jsonify(latest_data)
+        
+    except Exception as e:
+        # Acum vom vedea eroarea clara pe ecran in format JSON
+        return jsonify({"error": str(e), "tip_eroare": str(type(e))}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
