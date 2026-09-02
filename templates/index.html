@@ -1,144 +1,141 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IIoT Dashboard - Festo MPS</title>
-    
-    <!-- Bootstrap 5 CSS for modern, responsive styling without custom CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
-    <!-- Chart.js for real-time data visualization -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+    <title>Digital Twin - SCADA Dashboard</title>
     <style>
-        body { background-color: #121212; color: #ffffff; }
-        .card { background-color: #1e1e1e; border: 1px solid #333; }
-        .chart-container { position: relative; height: 40vh; width: 100%; }
+        :root { 
+            --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; 
+            --green: #00e676; --yellow: #ffea00; --red: #ff1744; --accent: #29b6f6; 
+        }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: var(--bg); color: var(--text); 
+            margin: 0; padding: 20px; 
+        }
+        h1 { 
+            text-align: center; color: var(--accent); 
+            letter-spacing: 2px; text-transform: uppercase; margin-bottom: 30px; 
+        }
+        .grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); 
+            gap: 20px; 
+        }
+        .card { 
+            background-color: var(--card); border-radius: 10px; padding: 20px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-top: 4px solid var(--accent); 
+            transition: all 0.3s ease; 
+        }
+        .card h2 { 
+            margin-top: 0; display: flex; justify-content: space-between; 
+            align-items: center; border-bottom: 1px solid #333; padding-bottom: 10px;
+        }
+        .badge { 
+            padding: 5px 10px; border-radius: 20px; font-size: 12px; 
+            font-weight: bold; text-transform: uppercase; 
+        }
+        
+        /* Starile de functionare */
+        .status-RUN { background-color: rgba(0, 230, 118, 0.1); color: var(--green); border: 1px solid var(--green); }
+        .status-WARNING { background-color: rgba(255, 234, 0, 0.1); color: var(--yellow); border: 1px solid var(--yellow); }
+        .status-FAULT { 
+            background-color: rgba(255, 23, 68, 0.1); color: var(--red); 
+            border: 1px solid var(--red); animation: pulse 1s infinite; 
+        }
+
+        .data-section { margin-top: 15px; }
+        .data-row { 
+            display: flex; justify-content: space-between; margin-bottom: 8px; 
+            font-size: 14px; border-bottom: 1px dashed #333; padding-bottom: 4px;
+        }
+        .degradation-bar { 
+            width: 100%; background-color: #333; height: 12px; 
+            border-radius: 6px; margin-top: 8px; overflow: hidden; 
+        }
+        .degradation-fill { height: 100%; transition: width 0.3s; }
+        
+        @keyframes pulse { 
+            0% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0.7); } 
+            70% { box-shadow: 0 0 0 10px rgba(255, 23, 68, 0); } 
+            100% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0); } 
+        }
+        .footer { text-align: center; font-size: 12px; color: #888; margin-top: 40px; }
     </style>
 </head>
 <body>
+    <h1>🌐 Festo Digital Twin - Live Monitor</h1>
+    <div class="grid" id="dashboard"></div>
+    <div class="footer" id="last-update">Conectare la sistem...</div>
 
-<div class="container mt-4">
-    <h5 class="mb-4 text-center text-primary">Festo MPS - Real-Time Telemetry Dashboard</h5>
+    <script>
+        function updateDashboard() {
+            fetch('/api/live')
+                .then(response => response.json())
+                .then(data => {
+                    const dashboard = document.getElementById('dashboard');
+                    dashboard.innerHTML = ''; // Golim grid-ul pentru noile date
 
-    <!-- Live Chart Section -->
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card p-3">
-                <h5 class="card-title">Pneumatic Air Pressure (Live)</h5>
-                <div class="chart-container">
-                    <canvas id="pressureChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
+                    // Sortam statiile alfabetic si construim interfata dinamic
+                    Object.keys(data).sort().forEach(stationName => {
+                        const station = data[stationName];
+                        
+                        // Logica de Alarme (Mentenanta Predictiva vizuala)
+                        let statusClass = 'status-RUN';
+                        let barColor = 'var(--green)';
+                        
+                        if (station.health.degradation_score >= 0.7) {
+                            statusClass = 'status-WARNING';
+                            barColor = 'var(--yellow)';
+                        }
+                        if (station.health.state === 'FAULT') {
+                            statusClass = 'status-FAULT';
+                            barColor = 'var(--red)';
+                        }
 
-    <!-- Historical Data Table Section -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card p-3">
-                <h5 class="card-title">Recent Workpieces Processed</h5>
-                <div class="table-responsive">
-                    <table class="table table-dark table-hover mt-3">
-                        <thead>
-                            <tr>
-                                <th>Timestamp</th>
-                                <th>Container ID</th>
-                                <th>Color</th>
-                                <th>Station</th>
-                                <th>Pressure (Bar)</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Jinja2 loop to populate the table from Flask backend -->
-                            {% for row in data %}
-                            <tr>
-                                <td>{{ row.timestamp }}</td>
-                                <td><strong>{{ row.container_id }}</strong></td>
-                                <td>{{ row.container_color }}</td>
-                                <td>{{ row.station_name }}</td>
-                                <td>{{ row.air_pressure_bar }}</td>
-                                <td>
-                                    <!-- Dynamic badge color based on status -->
-                                    {% if row.status == 'OK' %}
-                                        <span class="badge bg-success">{{ row.status }}</span>
-                                    {% elif row.status == 'REJECTED_DEFECT' %}
-                                        <span class="badge bg-warning text-dark">{{ row.status }}</span>
-                                    {% else %}
-                                        <span class="badge bg-danger">{{ row.status }}</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+                        // Generam HTML-ul pentru masuratori (senzori)
+                        let measurementsHtml = '';
+                        for (const [key, value] of Object.entries(station.measurements)) {
+                            // Inlocuim underscore cu spatiu pentru estetica (ex: cycle_time -> cycle time)
+                            let prettyKey = key.replace(/_/g, ' '); 
+                            measurementsHtml += `<div class="data-row"><span style="text-transform: capitalize;">${prettyKey}</span><strong>${value}</strong></div>`;
+                        }
 
-<!-- JavaScript for real-time chart updates -->
-<script>
-    // Initialize the Chart.js instance
-    const ctx = document.getElementById('pressureChart').getContext('2d');
-    const pressureChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: [], // Time labels will be injected here
-            datasets: [{
-                label: 'Air Pressure (Bar)',
-                borderColor: '#0d6efd',
-                backgroundColor: 'rgba(13, 110, 253, 0.2)',
-                borderWidth: 2,
-                pointRadius: 3,
-                data: [], // Pressure values will be injected here
-                fill: true,
-                tension: 0.3 // Smooth curves
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: {
-                    min: 2.0, // Minimum pressure for chart readability
-                    max: 8.0, // Maximum pressure
-                    grid: { color: '#333' }
-                },
-                x: {
-                    grid: { color: '#333' }
-                }
-            },
-            plugins: {
-                legend: { labels: { color: '#fff' } }
-            }
+                        // Construim Cardul Statiei
+                        const card = document.createElement('div');
+                        card.className = 'card';
+                        
+                        // Calculam procentul de degradare
+                        let degPercent = (station.health.degradation_score * 100).toFixed(1);
+                        if (degPercent > 100) degPercent = 100;
+
+                        card.innerHTML = `
+                            <h2>${stationName} <span class="badge ${statusClass}">${station.health.state}</span></h2>
+                            
+                            <div class="data-section">
+                                <div class="data-row"><span>Uzură Echipament (Degradare)</span><strong>${degPercent}%</strong></div>
+                                <div class="degradation-bar">
+                                    <div class="degradation-fill" style="width: ${degPercent}%; background-color: ${barColor}"></div>
+                                </div>
+                            </div>
+
+                            <div class="data-section">
+                                <h4 style="margin-bottom: 10px; color: #888; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Senzori Virtuali</h4>
+                                ${measurementsHtml}
+                            </div>
+                        `;
+                        dashboard.appendChild(card);
+                    });
+
+                    document.getElementById('last-update').innerText = 'Ultima actualizare: ' + new Date().toLocaleTimeString();
+                })
+                .catch(err => console.error('Eroare la citirea datelor:', err));
         }
-    });
 
-    // Function to fetch data from the Flask API and update the chart
-    async function fetchChartData() {
-        try {
-            const response = await fetch('/api/chart-data');
-            const data = await response.json();
-
-            // Update chart data
-            pressureChart.data.labels = data.labels;
-            pressureChart.data.datasets[0].data = data.pressures;
-            
-            // Re-render the chart smoothly
-            pressureChart.update('none'); 
-        } catch (error) {
-            console.error('Error fetching chart data:', error);
-        }
-    }
-
-    // Call fetchChartData immediately, then every 3 seconds
-    fetchChartData();
-    setInterval(fetchChartData, 3000);
-</script>
-
+        // Prima citire instantanee, apoi actualizam o data pe secunda
+        updateDashboard();
+        setInterval(updateDashboard, 1000);
+    </script>
 </body>
 </html>
