@@ -1,141 +1,49 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ro">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Digital Twin - SCADA Dashboard</title>
-    <style>
-        :root { 
-            --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; 
-            --green: #00e676; --yellow: #ffea00; --red: #ff1744; --accent: #29b6f6; 
-        }
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background-color: var(--bg); color: var(--text); 
-            margin: 0; padding: 20px; 
-        }
-        h1 { 
-            text-align: center; color: var(--accent); 
-            letter-spacing: 2px; text-transform: uppercase; margin-bottom: 30px; 
-        }
-        .grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); 
-            gap: 20px; 
-        }
-        .card { 
-            background-color: var(--card); border-radius: 10px; padding: 20px; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3); border-top: 4px solid var(--accent); 
-            transition: all 0.3s ease; 
-        }
-        .card h2 { 
-            margin-top: 0; display: flex; justify-content: space-between; 
-            align-items: center; border-bottom: 1px solid #333; padding-bottom: 10px;
-        }
-        .badge { 
-            padding: 5px 10px; border-radius: 20px; font-size: 12px; 
-            font-weight: bold; text-transform: uppercase; 
-        }
-        
-        /* Starile de functionare */
-        .status-RUN { background-color: rgba(0, 230, 118, 0.1); color: var(--green); border: 1px solid var(--green); }
-        .status-WARNING { background-color: rgba(255, 234, 0, 0.1); color: var(--yellow); border: 1px solid var(--yellow); }
-        .status-FAULT { 
-            background-color: rgba(255, 23, 68, 0.1); color: var(--red); 
-            border: 1px solid var(--red); animation: pulse 1s infinite; 
-        }
-
-        .data-section { margin-top: 15px; }
-        .data-row { 
-            display: flex; justify-content: space-between; margin-bottom: 8px; 
-            font-size: 14px; border-bottom: 1px dashed #333; padding-bottom: 4px;
-        }
-        .degradation-bar { 
-            width: 100%; background-color: #333; height: 12px; 
-            border-radius: 6px; margin-top: 8px; overflow: hidden; 
-        }
-        .degradation-fill { height: 100%; transition: width 0.3s; }
-        
-        @keyframes pulse { 
-            0% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0.7); } 
-            70% { box-shadow: 0 0 0 10px rgba(255, 23, 68, 0); } 
-            100% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0); } 
-        }
-        .footer { text-align: center; font-size: 12px; color: #888; margin-top: 40px; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Festo Operations Console</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+    :root { --ink:#17212b; --muted:#65727d; --paper:#f4f6f3; --panel:#fff; --line:#dfe5e1; --teal:#007c83; --lime:#c6e86b; --amber:#e49b32; --red:#d94b45; --shadow:0 10px 30px #19352b0d; }
+    * { box-sizing:border-box; } body { margin:0; background:var(--paper); color:var(--ink); font:14px 'DM Sans',sans-serif; }
+    header { background:#153c35; color:#fff; padding:26px clamp(18px,4vw,56px) 24px; display:flex; align-items:end; justify-content:space-between; gap:24px; }
+    h1,h2,h3,p { margin:0; } h1 { font:700 clamp(29px,4vw,48px)/.95 'Barlow Condensed',sans-serif; text-transform:uppercase; } header p { color:#b7d3cb; margin-top:8px; }
+    .signal { display:flex; align-items:center; gap:9px; color:#d5ef8b; font-weight:600; white-space:nowrap; } .dot { width:10px; height:10px; background:var(--lime); border-radius:50%; box-shadow:0 0 0 5px #c6e86b22; }
+    main { max-width:1440px; margin:auto; padding:24px clamp(18px,4vw,56px) 44px; } .toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:12px; padding-bottom:22px; border-bottom:1px solid var(--line); }
+    label { display:grid; gap:6px; color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; } input,select,button { height:40px; border:1px solid #cbd6d0; border-radius:6px; background:white; padding:0 12px; font:inherit; color:var(--ink); } button { background:var(--teal); color:white; border-color:var(--teal); cursor:pointer; font-weight:700; } button:hover { filter:brightness(1.08); }
+    .quick { display:flex; gap:6px; align-items:center; margin-right:auto; } .quick button { background:#e7eeea; color:var(--teal); border-color:#d7e1db; } .quick button.active { background:var(--teal); color:#fff; }
+    .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:22px 0; } .kpi,.panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); } .kpi { padding:18px; } .kpi small,.eyebrow { color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; } .kpi strong { display:block; font:700 32px 'Barlow Condensed',sans-serif; margin-top:5px; } .ok { color:var(--teal); } .warn { color:var(--amber); } .danger { color:var(--red); }
+    .layout { display:grid; grid-template-columns:minmax(0,1.45fr) minmax(320px,.8fr); gap:16px; } .panel { padding:20px; } .panel h2 { font:700 25px 'Barlow Condensed',sans-serif; text-transform:uppercase; margin-bottom:16px; } .chart-wrap { height:245px; } canvas { width:100%; height:100%; }
+    .stations { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin-top:16px; } .station { border:1px solid var(--line); border-left:5px solid var(--teal); border-radius:6px; padding:15px; background:#fff; } .station.high { border-left-color:var(--amber); } .station.critical { border-left-color:var(--red); } .station-top { display:flex; justify-content:space-between; gap:12px; } .station h3 { font:600 21px 'Barlow Condensed',sans-serif; } .badge { border-radius:99px; padding:4px 8px; font-size:11px; font-weight:700; background:#e4f3ed; color:var(--teal); } .badge.warn { background:#fff1d9; color:#9b620e; } .badge.danger { background:#ffe3e0; color:#b83c37; } .meter { height:8px; background:#e7ece9; margin:12px 0; border-radius:5px; overflow:hidden; } .meter i { display:block; height:100%; background:var(--teal); } .high .meter i { background:var(--amber); } .critical .meter i { background:var(--red); } .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; color:var(--muted); font-size:12px; } .metrics b { display:block; color:var(--ink); font-size:14px; margin-top:2px; }
+    .maintenance { display:grid; gap:10px; } .task { display:grid; grid-template-columns:10px 1fr auto; gap:10px; align-items:start; padding-bottom:10px; border-bottom:1px solid var(--line); } .task i { width:10px; height:10px; border-radius:50%; background:var(--teal); margin-top:4px; } .task.warn i { background:var(--amber); } .task.danger i { background:var(--red); } .task strong { display:block; } .task span { color:var(--muted); font-size:12px; } .due { font-size:11px; font-weight:700; color:var(--muted); white-space:nowrap; }
+    .events { margin-top:16px; } table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); } th { color:var(--muted); font-size:11px; text-transform:uppercase; } td { font-size:13px; } .empty { color:var(--muted); padding:18px 0; }
+    footer { color:var(--muted); padding-top:18px; font-size:12px; } @media (max-width:850px) { header { align-items:start; flex-direction:column; } .kpis { grid-template-columns:repeat(2,1fr); } .layout { grid-template-columns:1fr; } .quick { margin:0; } } @media (max-width:520px) { .kpis { gap:8px; } .kpi { padding:12px; } .kpi strong { font-size:26px; } .toolbar > * { flex:1 1 140px; } .quick { flex-basis:100%; } }
+  </style>
 </head>
 <body>
-    <h1>🌐 Festo Digital Twin - Live Monitor</h1>
-    <div class="grid" id="dashboard"></div>
-    <div class="footer" id="last-update">Conectare la sistem...</div>
-
-    <script>
-        function updateDashboard() {
-            fetch('/api/live')
-                .then(response => response.json())
-                .then(data => {
-                    const dashboard = document.getElementById('dashboard');
-                    dashboard.innerHTML = ''; // Golim grid-ul pentru noile date
-
-                    // Sortam statiile alfabetic si construim interfata dinamic
-                    Object.keys(data).sort().forEach(stationName => {
-                        const station = data[stationName];
-                        
-                        // Logica de Alarme (Mentenanta Predictiva vizuala)
-                        let statusClass = 'status-RUN';
-                        let barColor = 'var(--green)';
-                        
-                        if (station.health.degradation_score >= 0.7) {
-                            statusClass = 'status-WARNING';
-                            barColor = 'var(--yellow)';
-                        }
-                        if (station.health.state === 'FAULT') {
-                            statusClass = 'status-FAULT';
-                            barColor = 'var(--red)';
-                        }
-
-                        // Generam HTML-ul pentru masuratori (senzori)
-                        let measurementsHtml = '';
-                        for (const [key, value] of Object.entries(station.measurements)) {
-                            // Inlocuim underscore cu spatiu pentru estetica (ex: cycle_time -> cycle time)
-                            let prettyKey = key.replace(/_/g, ' '); 
-                            measurementsHtml += `<div class="data-row"><span style="text-transform: capitalize;">${prettyKey}</span><strong>${value}</strong></div>`;
-                        }
-
-                        // Construim Cardul Statiei
-                        const card = document.createElement('div');
-                        card.className = 'card';
-                        
-                        // Calculam procentul de degradare
-                        let degPercent = (station.health.degradation_score * 100).toFixed(1);
-                        if (degPercent > 100) degPercent = 100;
-
-                        card.innerHTML = `
-                            <h2>${stationName} <span class="badge ${statusClass}">${station.health.state}</span></h2>
-                            
-                            <div class="data-section">
-                                <div class="data-row"><span>Uzură Echipament (Degradare)</span><strong>${degPercent}%</strong></div>
-                                <div class="degradation-bar">
-                                    <div class="degradation-fill" style="width: ${degPercent}%; background-color: ${barColor}"></div>
-                                </div>
-                            </div>
-
-                            <div class="data-section">
-                                <h4 style="margin-bottom: 10px; color: #888; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Senzori Virtuali</h4>
-                                ${measurementsHtml}
-                            </div>
-                        `;
-                        dashboard.appendChild(card);
-                    });
-
-                    document.getElementById('last-update').innerText = 'Ultima actualizare: ' + new Date().toLocaleTimeString();
-                })
-                .catch(err => console.error('Eroare la citirea datelor:', err));
-        }
-
-        // Prima citire instantanee, apoi actualizam o data pe secunda
-        updateDashboard();
-        setInterval(updateDashboard, 1000);
-    </script>
+  <header><div><div class="eyebrow" style="color:#b7d3cb">Production intelligence / line 01</div><h1>Festo Operations Console</h1><p>Stare, tendințe și mentenanță preventivă într-o singură vedere.</p></div><div class="signal"><span class="dot"></span><span id="connection">Sistem online</span></div></header>
+  <main>
+    <section class="toolbar"><div class="quick"><button data-hours="1">1H</button><button data-hours="8">8H</button><button class="active" data-hours="24">24H</button><button data-hours="168">7 ZILE</button></div><label>De la<input id="from" type="datetime-local"></label><label>Până la<input id="to" type="datetime-local"></label><label>Stație<select id="station"><option value="">Toate stațiile</option></select></label><button id="apply">Actualizează</button></section>
+    <section class="kpis"><div class="kpi"><small>Stare linie</small><strong id="line-state" class="ok">ONLINE</strong></div><div class="kpi"><small>Producție bună</small><strong id="good">--</strong></div><div class="kpi"><small>Rată calitate</small><strong id="quality">--</strong></div><div class="kpi"><small>Intervenții recomandate</small><strong id="actions" class="warn">--</strong></div></section>
+    <section class="layout"><div class="panel"><h2>Trend degradare</h2><div class="chart-wrap"><canvas id="chart"></canvas></div></div><div class="panel"><h2>Plan mentenanță</h2><div id="maintenance" class="maintenance"></div></div></section>
+    <section class="panel" style="margin-top:16px"><h2>Stare stații</h2><div id="stations" class="stations"></div></section>
+    <section class="panel events"><h2>Evenimente recente</h2><div id="events"></div></section>
+    <footer id="updated">Se conectează la sistem...</footer>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id); const pretty = value => String(value).replaceAll('_',' '); const format = value => typeof value === 'number' ? Number.isInteger(value) ? value : value.toFixed(2) : value;
+    const dateInput = date => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+    const now = new Date(); $('to').value = dateInput(now); $('from').value = dateInput(new Date(now - 24*3600*1000));
+    document.querySelectorAll('[data-hours]').forEach(button => button.onclick = () => { document.querySelectorAll('[data-hours]').forEach(item => item.classList.remove('active')); button.classList.add('active'); $('to').value=dateInput(new Date()); $('from').value=dateInput(new Date(Date.now()-Number(button.dataset.hours)*3600000)); load(); });
+    function classFor(station) { const score=station.health?.degradation_score||0; return score>=.75 || station.health?.state==='FAILURE' ? 'critical' : score>=.45 ? 'high' : ''; }
+    function drawTrend(rows) { const canvas=$('chart'), box=canvas.parentElement, ratio=devicePixelRatio||1; canvas.width=box.clientWidth*ratio; canvas.height=box.clientHeight*ratio; const ctx=canvas.getContext('2d'); ctx.scale(ratio,ratio); const width=box.clientWidth,height=box.clientHeight; ctx.strokeStyle='#dfe5e1'; ctx.lineWidth=1; for(let i=0;i<4;i++){const y=20+i*(height-40)/3;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();} const grouped={}; rows.forEach(row=>{const score=row.payload.health?.degradation_score||0;(grouped[row.station]??=[]).push(score)}); const colors=['#007c83','#d94b45','#e49b32','#6088a0','#7c5b9e']; Object.entries(grouped).forEach(([name,values],index)=>{ctx.strokeStyle=colors[index%colors.length];ctx.lineWidth=2;ctx.beginPath();values.forEach((value,i)=>{const x=values.length===1?width/2:i/(values.length-1)*width;const y=height-20-value*(height-40);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();}); }
+    function renderStations(live) { const stations=$('stations'); stations.innerHTML=''; Object.entries(live).sort().forEach(([name,data])=>{const score=data.health?.degradation_score||0, kind=classFor(data), faults=Object.keys(data.health?.active_faults||{}); const card=document.createElement('article'); card.className='station '+kind; card.innerHTML=`<div class="station-top"><h3>${name}</h3><span class="badge ${kind==='critical'?'danger':kind?'warn':''}">${data.health?.state||'UNKNOWN'}</span></div><div class="meter"><i style="width:${Math.min(score*100,100)}%"></i></div><div class="metrics"><span>Degradare<b>${(score*100).toFixed(1)}%</b></span><span>Risc<b>${data.health?.risk_level||'LOW'}</b></span><span>Proces<b>${data.process?.state||'--'}</b></span><span>Defecțiuni<b>${faults.length?faults.map(pretty).join(', '):'Niciuna'}</b></span></div>`; stations.appendChild(card); }); }
+    function renderMaintenance(live) { const list=$('maintenance'); const items=Object.entries(live).map(([name,data])=>{const score=data.health?.degradation_score||0; if(score<.25&&!Object.keys(data.health?.active_faults||{}).length) return null; const fault=Object.keys(data.health?.active_faults||{})[0]; return {name,score,fault,action:score>=.75?'Oprește și inspectează':fault?`Verifică ${pretty(fault)}`:'Inspecție preventivă', due:score>=.75?'Acum':score>=.45?'În 24h':'În 7 zile'} }).filter(Boolean).sort((a,b)=>b.score-a.score); list.innerHTML=items.length?items.map(item=>`<div class="task ${classFor({health:{degradation_score:item.score}})}"><i></i><div><strong>${item.name}: ${item.action}</strong><span>Scor degradare ${(item.score*100).toFixed(1)}%${item.fault?' · defect activ detectat':''}</span></div><span class="due">${item.due}</span></div>`).join(''):'<div class="empty">Nicio intervenție urgentă. Continuă monitorizarea.</div>'; $('actions').textContent=items.length; }
+    function renderEvents(live) { const events=[]; Object.entries(live).forEach(([name,data])=>(data.events||[]).forEach(event=>events.push({name,event,time:data.timestamp}))); events.sort((a,b)=>new Date(b.time)-new Date(a.time)); $('events').innerHTML=events.length?`<table><thead><tr><th>Ora</th><th>Stație</th><th>Eveniment</th><th>Severitate</th></tr></thead><tbody>${events.slice(0,12).map(item=>`<tr><td>${new Date(item.time).toLocaleTimeString('ro-RO')}</td><td>${item.name}</td><td>${pretty(item.event.code)}</td><td>${item.event.severity}</td></tr>`).join('')}</tbody></table>`:'<div class="empty">Nu există evenimente în ultima citire.</div>'; }
+    async function load() { try { const liveResponse=await fetch('/api/live'); if(!liveResponse.ok) throw Error('live'); const live=await liveResponse.json(); const params=new URLSearchParams({from:new Date($('from').value).toISOString(),to:new Date($('to').value).toISOString(),limit:'3000'}); if($('station').value) params.set('station',$('station').value); const historyResponse=await fetch('/api/history?'+params); if(!historyResponse.ok) throw Error('history'); const history=await historyResponse.json(); const names=Object.keys(live).sort(); const selected=$('station').value; $('station').innerHTML='<option value="">Toate stațiile</option>'+names.map(name=>`<option>${name}</option>`).join(''); $('station').value=selected; const production=Object.values(live).map(item=>item.line?.production).find(Boolean)||{}; $('good').textContent=format(production.good??'--'); $('quality').textContent=production.quality_rate!=null?`${(production.quality_rate*100).toFixed(1)}%`:'--'; renderStations(live); renderMaintenance(live); renderEvents(live); drawTrend(history.rows); $('connection').textContent='Sistem online'; $('updated').textContent=`Ultima actualizare: ${new Date().toLocaleString('ro-RO')} · ${history.count} probe în interval`; } catch(error) { $('connection').textContent='Conexiune indisponibilă'; $('line-state').textContent='OFFLINE'; $('line-state').className='danger'; $('updated').textContent='Nu s-au putut încărca datele. Verifică serviciul web și conexiunea DB.'; } }
+    $('apply').onclick=load; load(); setInterval(load,30000); window.onresize=load;
+  </script>
 </body>
 </html>
