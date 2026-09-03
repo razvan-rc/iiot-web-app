@@ -79,7 +79,7 @@ def api_history():
                     f"""SELECT timestamp, station_name, payload_json
                         FROM festo_telemetry
                         WHERE {' AND '.join(clauses)}
-                        ORDER BY timestamp ASC
+                        ORDER BY timestamp DESC
                         LIMIT %s""",
                     params,
                 )
@@ -97,7 +97,7 @@ def api_history():
                     'station': row['station_name'],
                     'payload': json.loads(row['payload_json']),
                 }
-                for row in rows
+                for row in reversed(rows)
             ],
         })
     except (ValueError, TypeError) as e:
