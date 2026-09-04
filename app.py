@@ -8,11 +8,11 @@ app = Flask(__name__)
 STATION_METRICS = {
     'Bottling': {'flow_ml_s': 'ml/s', 'fill_time_s': 's', 'pump_load_pct': '%', 'tank_level_ml': 'ml'},
     'Distributing': {'cycle_time_s': 's', 'actuator_response_time_s': 's'},
-    'MPS-PA': {'pressure_bar': 'bar', 'flow_l_min': 'l/min', 'temperature_c': 'C', 'level_percent': '%'},
     'Pick_and_Place': {'cycle_time_s': 's', 'vacuum_pressure_bar': 'bar'},
     'Separating': {'measured_height_mm': 'mm', 'sensor_error_mm': 'mm', 'cycle_time_s': 's'},
     'Sorting': {'sorting_time_s': 's'},
 }
+ACTIVE_STATIONS = tuple(STATION_METRICS)
 
 def get_db_connection():
     # Ne conectam mereu la SLAVE pentru citiri (Read-Replica)
@@ -48,10 +48,11 @@ def api_live():
                     SELECT station_name, payload_json,
                            ROW_NUMBER() OVER (PARTITION BY station_name ORDER BY timestamp DESC) as rn
                     FROM festo_telemetry
+                    WHERE station_name IN ({})
                 ) tmp 
                 WHERE rn = 1;
             """
-            cursor.execute(sql)
+            cursor.execute(sql.format(','.join(['%s'] * len(ACTIVE_STATIONS))), ACTIVE_STATIONS)
             results = cursor.fetchall()
 
             for row in results:
@@ -74,8 +75,8 @@ def api_history():
         station = request.args.get('station')
         limit = min(max(int(request.args.get('limit', 2000)), 1), 10000)
 
-        clauses = ['timestamp >= %s', 'timestamp <= %s']
-        params = [start, end]
+        clauses = ['timestamp >= %s', 'timestamp <= %s', 'station_name IN ({})'.format(','.join(['%s'] * len(ACTIVE_STATIONS)))]
+        params = [start, end, *ACTIVE_STATIONS]
         if station:
             clauses.append('station_name = %s')
             params.append(station)
@@ -123,8 +124,8 @@ def api_summary():
         end = parse_datetime(request.args.get('to'), now)
         station = request.args.get('station')
         limit = min(max(int(request.args.get('limit', 10000)), 1), 20000)
-        clauses = ['timestamp >= %s', 'timestamp <= %s']
-        params = [start, end]
+        clauses = ['timestamp >= %s', 'timestamp <= %s', 'station_name IN ({})'.format(','.join(['%s'] * len(ACTIVE_STATIONS)))]
+        params = [start, end, *ACTIVE_STATIONS]
         if station:
             clauses.append('station_name = %s')
             params.append(station)
