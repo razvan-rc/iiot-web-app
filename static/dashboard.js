@@ -134,12 +134,22 @@
       ctx.fillText(new Date(time).toLocaleString('ro-RO', options), x, height - 16);
     }
 
-    $('legend').innerHTML = Object.entries(grouped).map(([name, points], index) =>
-      `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)} · ${points.length} puncte</span>`
-    ).join('');
+    const seriesInfo = Object.fromEntries(Object.entries(grouped).map(([name, points]) => {
+      const deltas = points.slice(1).map((point, index) => point.time - points[index].time).sort((a, b) => a - b);
+      const medianDelta = deltas.length ? deltas[Math.floor(deltas.length / 2)] : Infinity;
+      const gapThreshold = Math.max(60000, medianDelta * 5);
+      const gaps = deltas.filter(delta => delta > gapThreshold).length;
+      return [name, { gapThreshold, gaps }];
+    }));
+
+    $('legend').innerHTML = Object.entries(grouped).map(([name, points], index) => {
+      const gaps = seriesInfo[name].gaps;
+      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)} · ${points.length} puncte${gaps ? ` · ${gaps} întreruperi` : ''}</span>`;
+    }).join('');
 
     Object.entries(grouped).forEach(([name, points], index) => {
       const color = colors[index % colors.length];
+      const gapThreshold = seriesInfo[name].gapThreshold;
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.lineJoin = 'round';
@@ -148,7 +158,8 @@
       points.forEach((point, pointIndex) => {
         const x = xAt(point.time);
         const y = yAt(point.value);
-        if (pointIndex === 0) ctx.moveTo(x, y);
+        const previous = points[pointIndex - 1];
+        if (!previous || point.time - previous.time > gapThreshold) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
         hoverPoints.push({ x, y, name, value: point.value, time: new Date(point.time), unit });
       });
