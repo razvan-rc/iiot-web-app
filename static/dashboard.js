@@ -1,19 +1,19 @@
 (() => {
   const $ = id => document.getElementById(id);
-  const colors = ['#007c83', '#d94b45', '#e49b32', '#6088a0', '#7c5b9e', '#a65f46'];
+  const colors = ['#007c83', '#d94b45', '#e49b32', '#6088a0', '#7c5b9e'];
   const metricUnits = {
-    flow_ml_s: 'ml/s', fill_time_s: 's', pump_load_pct: '%', tank_level_ml: 'ml',
-    capping_time_s: 's', cap_torque_nm: 'Nm', cap_height_error_mm: 'mm',
+    flow_ml_s: 'ml/s', fill_volume_ml: 'ml', fill_error_ml: 'ml', valve_open_time_s: 's',
+    tank_level_ml: 'ml', tank_level_pct: '%', cap_torque_nm: 'Nm',
     cycle_time_s: 's', actuator_response_time_s: 's', vacuum_pressure_bar: 'bar',
-    measured_height_mm: 'mm', sensor_error_mm: 'mm', sorting_time_s: 's'
+    color_confidence_pct: '%', sorting_time_s: 's', classification_confidence_pct: '%'
   };
   const maintenanceAdvice = {
-    pump_wear: ['Pompă', 'Măsoară vibrațiile și verifică debitul'],
-    vacuum_leak: ['Circuit vacuum', 'Testează etanșeitatea și furtunurile'],
+    valve_flow_loss: ['Vană de dozare', 'Verifică debitul, depunerile și etanșarea vanei'],
+    valve_stiction: ['Vană de dozare', 'Verifică timpul de deschidere și cursa vanei'],
+    vacuum_leak: ['Cap pneumatic', 'Verifică vacuumul, prinderea și poziționarea capacului'],
     sensor_drift: ['Senzor', 'Calibrează senzorul și verifică alinierea'],
     cylinder_slowdown: ['Cilindru', 'Verifică presiunea și lubrifierea'],
-    sensor_misread: ['Senzor optic', 'Curăță lentila și verifică iluminarea'],
-    capper_wear: ['Cap de înfiletare', 'Verifică uzura, alinierea și cuplul aplicat']
+    sensor_misread: ['Senzor material/culoare', 'Curăță și calibrează senzorii de sortare']
   };
 
   let hoverPoints = [];
@@ -285,6 +285,7 @@
     $('line-mode').textContent = pretty(line.operational_state || '--');
     $('line-state').className = state === 'ONLINE' ? 'ok' : state === 'DEGRADED' ? 'warn' : 'danger';
     $('good').textContent = format(production.good ?? 0);
+    $('diverted').textContent = `Bandă secundară: ${format(production.diverted ?? 0)}`;
     $('quality').textContent = production.quality_rate == null ? '--' : `${(production.quality_rate * 100).toFixed(1)}%`;
     $('oee').textContent = line.oee_pct == null ? '--' : `${line.oee_pct.toFixed(1)}%`;
     $('oee').className = line.oee_pct >= 85 ? 'ok' : line.oee_pct >= 60 ? 'warn' : 'danger';

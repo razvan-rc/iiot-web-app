@@ -7,12 +7,11 @@ from datetime import datetime, timezone
 app = Flask(__name__)
 
 STATION_METRICS = {
-    'Bottling': {'flow_ml_s': 'ml/s', 'fill_time_s': 's', 'pump_load_pct': '%', 'tank_level_ml': 'ml'},
-    'Capping': {'capping_time_s': 's', 'cap_torque_nm': 'Nm', 'cap_height_error_mm': 'mm'},
-    'Distributing': {'cycle_time_s': 's', 'actuator_response_time_s': 's'},
-    'Pick_and_Place': {'cycle_time_s': 's', 'vacuum_pressure_bar': 'bar'},
-    'Separating': {'measured_height_mm': 'mm', 'sensor_error_mm': 'mm', 'cycle_time_s': 's'},
-    'Sorting': {'sorting_time_s': 's'},
+    'Bottling': {'flow_ml_s': 'ml/s', 'fill_volume_ml': 'ml', 'fill_error_ml': 'ml', 'valve_open_time_s': 's', 'tank_level_ml': 'ml', 'tank_level_pct': '%'},
+    'Distributing': {'cycle_time_s': 's', 'actuator_response_time_s': 's', 'vacuum_pressure_bar': 'bar'},
+    'Pick_and_Place': {'cycle_time_s': 's', 'vacuum_pressure_bar': 'bar', 'cap_torque_nm': 'Nm'},
+    'Separating': {'color_confidence_pct': '%', 'cycle_time_s': 's'},
+    'Sorting': {'sorting_time_s': 's', 'classification_confidence_pct': '%'},
 }
 ACTIVE_STATIONS = tuple(STATION_METRICS)
 
@@ -305,6 +304,10 @@ def api_summary():
             payload.get('line', {}).get('production', {}).get('rejects')
             for payload in line_payloads
         ]))
+        production_diverted = round(counter_delta([
+            payload.get('line', {}).get('production', {}).get('diverted')
+            for payload in line_payloads
+        ]))
         production_total = production_good + production_rejects
         latest = {name: summary['latest'] for name, summary in summaries.items()}
         freshest_payload = max(latest.values(), key=lambda payload: payload.get('timestamp', '')) if latest else {}
@@ -315,7 +318,7 @@ def api_summary():
         first_timestamp = min((row['timestamp'] for row in sampled_rows), default=None)
         last_timestamp = max((row['timestamp'] for row in sampled_rows), default=None)
         observed_minutes = max((last_timestamp - first_timestamp).total_seconds() / 60.0, 1 / 60) if first_timestamp else 0
-        output_station = 'Capping' if 'Capping' in summaries else ('Bottling' if 'Bottling' in summaries else None)
+        output_station = 'Sorting' if 'Sorting' in summaries else None
         output_station = output_station or (min(summaries, key=lambda name: summaries[name]['operational']['cycles_in_range']) if summaries else None)
         throughput_cycles = summaries[output_station]['operational']['cycles_in_range'] if output_station else 0
         throughput = round(throughput_cycles / observed_minutes, 2) if observed_minutes else 0
@@ -323,7 +326,7 @@ def api_summary():
             (summary['operational']['average_availability_pct'] for summary in summaries.values()),
             default=0,
         )
-        ideal_line_rate = 24.0
+        ideal_line_rate = 18.0
         performance_pct = min(100.0, throughput / ideal_line_rate * 100.0)
         quality_pct = production_good / production_total * 100.0 if production_total else 0
         oee_pct = availability_pct / 100.0 * performance_pct / 100.0 * quality_pct / 100.0 * 100.0
@@ -357,6 +360,7 @@ def api_summary():
                     'good': production_good,
                     'rejects': production_rejects,
                     'total': production_total,
+                    'diverted': production_diverted,
                     'quality_rate': round(production_good / production_total, 4) if production_total else None,
                 },
                 'wip': freshest_payload.get('line', {}).get('wip', {}),
