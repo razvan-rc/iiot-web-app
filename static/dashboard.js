@@ -73,7 +73,7 @@
       const value = metricValue(row, metric);
       const time = new Date(row.timestamp).getTime();
       if (Number.isFinite(value) && Number.isFinite(time)) {
-        (grouped[row.station] ??= []).push({ value, time });
+        (grouped[row.station] ??= []).push({ value, time, demo: Boolean(row.payload?.health?.demo_mode) });
       }
     });
     Object.values(grouped).forEach(points => points.sort((a, b) => a.time - b.time));
@@ -138,7 +138,8 @@
 
     $('legend').innerHTML = Object.entries(grouped).map(([name, points], index) => {
       const gaps = seriesInfo[name].gaps;
-      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)}${gaps ? ` · ${gaps} întreruperi` : ''}</span>`;
+      const demo = points.some(point => point.demo) ? ' · DEMO punctat' : '';
+      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)}${gaps ? ` · ${gaps} întreruperi` : ''}${demo}</span>`;
     }).join('');
 
     Object.entries(grouped).forEach(([name, points], index) => {
@@ -155,9 +156,34 @@
         const previous = points[pointIndex - 1];
         if (!previous || point.time - previous.time > gapThreshold) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
-        hoverPoints.push({ x, y, name, value: point.value, time: new Date(point.time), unit });
+        hoverPoints.push({ x, y, name, value: point.value, time: new Date(point.time), unit, demo: point.demo });
       });
       ctx.stroke();
+
+      if (points.some(point => point.demo)) {
+        ctx.save();
+        ctx.strokeStyle = '#e49b32';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 5]);
+        ctx.beginPath();
+        points.forEach((point, pointIndex) => {
+          if (!point.demo) return;
+          const previous = points[pointIndex - 1];
+          const x = xAt(point.time);
+          const y = yAt(point.value);
+          if (!previous?.demo || point.time - previous.time > gapThreshold) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#e49b32';
+        points.filter(point => point.demo).forEach(point => {
+          ctx.beginPath();
+          ctx.arc(xAt(point.time), yAt(point.value), 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.restore();
+      }
 
       if (points.length <= 80) {
         ctx.fillStyle = color;
@@ -185,7 +211,7 @@
       return;
     }
     const displayed = point.unit === '%' ? (point.value * 100).toFixed(1) : point.value.toFixed(2);
-    tooltip.innerHTML = `<strong>${escapeHtml(point.name)}</strong><br>${point.time.toLocaleString('ro-RO')}<br>Valoare: <strong>${displayed}${escapeHtml(point.unit)}</strong>`;
+    tooltip.innerHTML = `<strong>${escapeHtml(point.name)}</strong><br>${point.time.toLocaleString('ro-RO')}<br>Valoare: <strong>${displayed}${escapeHtml(point.unit)}</strong>${point.demo ? '<br><strong>Regim: DEMO sintetic</strong>' : ''}`;
     tooltip.style.left = `${Math.min(point.x, rect.width - 180)}px`;
     tooltip.style.top = `${point.y}px`;
     tooltip.hidden = false;
