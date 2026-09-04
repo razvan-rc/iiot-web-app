@@ -144,7 +144,7 @@
 
     $('legend').innerHTML = Object.entries(grouped).map(([name, points], index) => {
       const gaps = seriesInfo[name].gaps;
-      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)} · ${points.length} puncte${gaps ? ` · ${gaps} întreruperi` : ''}</span>`;
+      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)}${gaps ? ` · ${gaps} întreruperi` : ''}</span>`;
     }).join('');
 
     Object.entries(grouped).forEach(([name, points], index) => {
