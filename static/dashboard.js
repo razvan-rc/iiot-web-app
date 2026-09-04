@@ -1,8 +1,9 @@
 (() => {
   const $ = id => document.getElementById(id);
-  const colors = ['#007c83', '#d94b45', '#e49b32', '#6088a0', '#7c5b9e'];
+  const colors = ['#007c83', '#d94b45', '#e49b32', '#6088a0', '#7c5b9e', '#a65f46'];
   const metricUnits = {
     flow_ml_s: 'ml/s', fill_time_s: 's', pump_load_pct: '%', tank_level_ml: 'ml',
+    capping_time_s: 's', cap_torque_nm: 'Nm', cap_height_error_mm: 'mm',
     cycle_time_s: 's', actuator_response_time_s: 's', vacuum_pressure_bar: 'bar',
     measured_height_mm: 'mm', sensor_error_mm: 'mm', sorting_time_s: 's'
   };
@@ -11,7 +12,8 @@
     vacuum_leak: ['Circuit vacuum', 'Testează etanșeitatea și furtunurile'],
     sensor_drift: ['Senzor', 'Calibrează senzorul și verifică alinierea'],
     cylinder_slowdown: ['Cilindru', 'Verifică presiunea și lubrifierea'],
-    sensor_misread: ['Senzor optic', 'Curăță lentila și verifică iluminarea']
+    sensor_misread: ['Senzor optic', 'Curăță lentila și verifică iluminarea'],
+    capper_wear: ['Cap de înfiletare', 'Verifică uzura, alinierea și cuplul aplicat']
   };
 
   let hoverPoints = [];
@@ -280,9 +282,13 @@
     const production = line.production || {};
     const state = line.state || 'FĂRĂ DATE';
     $('line-state').textContent = state;
+    $('line-mode').textContent = pretty(line.operational_state || '--');
     $('line-state').className = state === 'ONLINE' ? 'ok' : state === 'DEGRADED' ? 'warn' : 'danger';
     $('good').textContent = format(production.good ?? 0);
     $('quality').textContent = production.quality_rate == null ? '--' : `${(production.quality_rate * 100).toFixed(1)}%`;
+    $('oee').textContent = line.oee_pct == null ? '--' : `${line.oee_pct.toFixed(1)}%`;
+    $('oee').className = line.oee_pct >= 85 ? 'ok' : line.oee_pct >= 60 ? 'warn' : 'danger';
+    $('oee-components').textContent = `A ${format(line.availability_pct ?? 0)}% · P ${format(line.performance_pct ?? 0)}% · Q ${format(line.quality_pct ?? 0)}%`;
     $('throughput').textContent = `${format(line.throughput_per_min ?? 0)}/min`;
     $('bottleneck').textContent = line.bottleneck || '--';
     $('wip').textContent = line.wip?.total ?? '--';

@@ -8,6 +8,7 @@ app = Flask(__name__)
 
 STATION_METRICS = {
     'Bottling': {'flow_ml_s': 'ml/s', 'fill_time_s': 's', 'pump_load_pct': '%', 'tank_level_ml': 'ml'},
+    'Capping': {'capping_time_s': 's', 'cap_torque_nm': 'Nm', 'cap_height_error_mm': 'mm'},
     'Distributing': {'cycle_time_s': 's', 'actuator_response_time_s': 's'},
     'Pick_and_Place': {'cycle_time_s': 's', 'vacuum_pressure_bar': 'bar'},
     'Separating': {'measured_height_mm': 'mm', 'sensor_error_mm': 'mm', 'cycle_time_s': 's'},
@@ -213,10 +214,10 @@ def api_summary():
             conn.close()
 
         def counter_delta(values):
-            values = [int(value) for value in values if isinstance(value, (int, float))]
+            values = [float(value) for value in values if isinstance(value, (int, float))]
             if len(values) < 2:
-                return 0
-            total = 0
+                return 0.0
+            total = 0.0
             previous = values[0]
             for current in values[1:]:
                 total += current - previous if current >= previous else current
@@ -283,20 +284,34 @@ def api_summary():
             summary['operational']['average_availability_pct'] = round(
                 summary['operational']['average_availability_pct'] / availability_weight, 2
             ) if availability_weight else 0
-            summary['operational']['cycles_in_range'] = counter_delta([
+            summary['operational']['cycles_in_range'] = round(counter_delta([
                 payload.get('operational', {}).get('cycle_count')
                 for payload in station_payloads
-            ])
+            ]))
+
+            state_deltas = {
+                state: counter_delta([
+                    payload.get('operational', {}).get('state_seconds', {}).get(state)
+                    for payload in station_payloads
+                ])
+                for state in ('RUN', 'DEGRADED', 'FAULT', 'FAILURE', 'MAINTENANCE')
+            }
+            planned = sum(state_deltas[state] for state in ('RUN', 'DEGRADED', 'FAULT', 'FAILURE'))
+            downtime = state_deltas['FAULT'] + state_deltas['FAILURE']
+            if planned:
+                summary['operational']['average_availability_pct'] = round(
+                    max(0.0, (planned - downtime) / planned * 100.0), 2
+                )
 
         line_payloads = payloads_by_station[sorted(payloads_by_station)[0]] if payloads_by_station else []
-        production_good = counter_delta([
+        production_good = round(counter_delta([
             payload.get('line', {}).get('production', {}).get('good')
             for payload in line_payloads
-        ])
-        production_rejects = counter_delta([
+        ]))
+        production_rejects = round(counter_delta([
             payload.get('line', {}).get('production', {}).get('rejects')
             for payload in line_payloads
-        ])
+        ]))
         production_total = production_good + production_rejects
         latest = {name: summary['latest'] for name, summary in summaries.items()}
         freshest_payload = max(latest.values(), key=lambda payload: payload.get('timestamp', '')) if latest else {}
@@ -304,6 +319,21 @@ def api_summary():
             name: summary['operational']['average_cycle_rate_per_min']
             for name, summary in summaries.items()
         }
+        first_timestamp = min((row['timestamp'] for row in sampled_rows), default=None)
+        last_timestamp = max((row['timestamp'] for row in sampled_rows), default=None)
+        observed_minutes = max((last_timestamp - first_timestamp).total_seconds() / 60.0, 1 / 60) if first_timestamp else 0
+        output_station = 'Capping' if 'Capping' in summaries else ('Bottling' if 'Bottling' in summaries else None)
+        output_station = output_station or (min(summaries, key=lambda name: summaries[name]['operational']['cycles_in_range']) if summaries else None)
+        throughput_cycles = summaries[output_station]['operational']['cycles_in_range'] if output_station else 0
+        throughput = round(throughput_cycles / observed_minutes, 2) if observed_minutes else 0
+        availability_pct = min(
+            (summary['operational']['average_availability_pct'] for summary in summaries.values()),
+            default=0,
+        )
+        ideal_line_rate = 24.0
+        performance_pct = min(100.0, throughput / ideal_line_rate * 100.0)
+        quality_pct = production_good / production_total * 100.0 if production_total else 0
+        oee_pct = availability_pct / 100.0 * performance_pct / 100.0 * quality_pct / 100.0 * 100.0
         freshest_timestamp = max((row['timestamp'] for row in sampled_rows), default=None)
         reference_time = min(end, datetime.now(timezone.utc).replace(tzinfo=None))
         freshness_seconds = max(0, round((reference_time - freshest_timestamp).total_seconds(), 1)) if freshest_timestamp else None
@@ -338,9 +368,14 @@ def api_summary():
                 },
                 'wip': freshest_payload.get('line', {}).get('wip', {}),
                 'active_alarms': active_alarms,
-                'throughput_per_min': min(average_rates.values()) if average_rates else 0,
+                'throughput_per_min': throughput,
                 'bottleneck': min(average_rates, key=average_rates.get) if average_rates else None,
                 'freshness_seconds': freshness_seconds,
+                'availability_pct': round(availability_pct, 2),
+                'performance_pct': round(performance_pct, 2),
+                'quality_pct': round(quality_pct, 2),
+                'oee_pct': round(oee_pct, 2),
+                'operational_state': freshest_payload.get('line', {}).get('operational', {}).get('state'),
             },
             'events': events[:50],
         }
