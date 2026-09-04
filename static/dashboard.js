@@ -7,14 +7,6 @@
     cycle_time_s: 's', actuator_response_time_s: 's', vacuum_pressure_bar: 'bar',
     color_confidence_pct: '%', sorting_time_s: 's', classification_confidence_pct: '%'
   };
-  const maintenanceAdvice = {
-    valve_flow_loss: ['Vană de dozare', 'Verifică debitul, depunerile și etanșarea vanei'],
-    valve_stiction: ['Vană de dozare', 'Verifică timpul de deschidere și cursa vanei'],
-    vacuum_leak: ['Cap pneumatic', 'Verifică vacuumul, prinderea și poziționarea capacului'],
-    sensor_drift: ['Senzor', 'Calibrează senzorul și verifică alinierea'],
-    cylinder_slowdown: ['Cilindru', 'Verifică presiunea și lubrifierea'],
-    sensor_misread: ['Senzor material/culoare', 'Curăță și calibrează senzorii de sortare']
-  };
 
   let hoverPoints = [];
   let lastRows = [];
@@ -279,31 +271,55 @@
     }).join('') : '<div class="empty">Nu există date de modul în intervalul selectat.</div>';
   }
 
-  function renderMaintenance(stations) {
-    const items = Object.entries(stations).map(([name, data]) => {
-      const latest = data.latest || {};
-      const score = currentScore(data);
-      const state = latest.health?.state || latest.state || 'UNKNOWN';
-      const faults = Object.keys(latest.health?.active_faults || {});
-      const fault = faults[0];
-      const requiresStop = ['FAULT', 'FAILURE'].includes(state) || score >= .9;
-      if (score < .45 && !fault && !requiresStop) return null;
-      const advice = maintenanceAdvice[fault] || ['Echipament', 'Inspectează modulul și compară măsurătorile cu valorile de bază'];
-      return {
-        name, score, fault, state, component: advice[0],
-        action: requiresStop ? `Izolează în siguranță modulul ${pretty(name)} și deschide un ordin de lucru` : advice[1],
-        due: requiresStop ? 'Acum' : score >= .65 || fault ? 'La următoarea oprire' : 'În 7 zile'
-      };
-    }).filter(Boolean).sort((a, b) => b.score - a.score);
 
-    $('maintenance').innerHTML = items.length ? `<p class="maintenance-note">Planul folosește degradarea curentă și faulturile active. Vârfurile istorice nu declanșează opriri.</p>${items.map(item => {
-      const kind = classForScore(item.score, item.state);
-      return `<div class="task ${kind === 'critical' ? 'danger' : kind ? 'warn' : ''}"><i></i><div>
-        <strong>${escapeHtml(item.action)}</strong>
-        <span>${escapeHtml(item.name)} · ${escapeHtml(item.component)} · degradare curentă ${(item.score * 100).toFixed(1)}%${item.fault ? ` · ${escapeHtml(pretty(item.fault))}` : ''}</span>
-      </div><span class="due">${item.due}</span></div>`;
-    }).join('')}` : '<div class="maintenance-ok"><strong>Nicio intervenție necesară acum</strong><span>Modulele nu au faulturi active și degradarea curentă este sub pragul de mentenanță.</span></div>';
-    $('actions').textContent = items.length;
+  function rulLabel(hours) {
+    if (hours == null) return 'Nedeterminat';
+    if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+    if (hours < 48) return `${format(hours)} h`;
+    return `${format(hours / 24)} zile`;
+  }
+
+  function renderMaintenance(plans) {
+    const priorityLabels = { CRITICAL: 'Critic', HIGH: 'Prioritate mare', MEDIUM: 'De urmărit', LOW: 'Normal' };
+    const confidenceLabels = { HIGH: 'Ridicată', MEDIUM: 'Medie', LOW: 'Scăzută', INSUFFICIENT_DATA: 'Date insuficiente' };
+    $('maintenance').innerHTML = plans.length ? plans.map(item => {
+      const kind = String(item.priority || 'LOW').toLowerCase();
+      return `<article class="maintenance-card ${kind}">
+        <header><div><small>${escapeHtml(pretty(item.component))}</small><h3>${escapeHtml(pretty(item.station))}</h3></div><span class="priority">${escapeHtml(priorityLabels[item.priority] || item.priority)}</span></header>
+        <div class="rul-row"><div class="rul-stat"><span>RUL estimat</span><b>${escapeHtml(rulLabel(item.rul_hours))}</b></div><div class="rul-stat"><span>Prag urmărit</span><b>${(Number(item.threshold) * 100).toFixed(0)}%</b></div><div class="rul-stat"><span>Încredere</span><b>${escapeHtml(confidenceLabels[item.confidence] || item.confidence)}</b></div></div>
+        <div class="maintenance-action">${escapeHtml(item.action)}</div>
+        <div class="maintenance-evidence">De ce: ${escapeHtml(item.evidence)}</div>
+        <div class="maintenance-impact"><b>Impact producție:</b> ${escapeHtml(item.production_impact)}</div>
+        <div class="maintenance-footer"><span>${escapeHtml(item.recommended_window)} · durată estimată ${format(item.duration_minutes)} min</span><button class="maintenance-complete" data-station="${escapeHtml(item.station)}" data-component="${escapeHtml(item.component)}">Înregistrează intervenția</button></div>
+      </article>`;
+    }).join('') : '<div class="empty">Nu există date suficiente pentru planul de mentenanță.</div>';
+  }
+
+  function renderMaintenanceHistory(commands, start, end) {
+    const actionLabels = {
+      DEMO_ACCELERATE: 'Degradare demonstrativă', DEMO_RESET: 'Oprire mod demo',
+      PERFORM_MAINTENANCE: 'Mentenanță efectuată'
+    };
+    const completedInRange = commands.filter(command => {
+      const time = new Date(command.applied_at || command.created_at);
+      return command.action_type === 'PERFORM_MAINTENANCE' && command.status === 'APPLIED' && time >= start && time <= end;
+    }).length;
+    $('actions').textContent = completedInRange;
+    $('maintenance-history').innerHTML = commands.length
+      ? `<table><thead><tr><th>Data și ora</th><th>Modul</th><th>Acțiune</th><th>Componentă</th><th>Rezultat</th><th>Status</th></tr></thead><tbody>${commands.slice(0, 20).map(command =>
+          `<tr><td>${new Date(command.applied_at || command.created_at).toLocaleString('ro-RO')}</td><td>${escapeHtml(pretty(command.station_name))}</td><td>${escapeHtml(actionLabels[command.action_type] || pretty(command.action_type))}</td><td>${escapeHtml(pretty(command.component))}</td><td>${escapeHtml(command.result_json?.message || command.notes || '--')}</td><td><span class="status-pill ${escapeHtml(String(command.status).toLowerCase())}">${escapeHtml(command.status)}</span></td></tr>`
+        ).join('')}</tbody></table>`
+      : '<div class="empty">Nu există încă intervenții sau scenarii înregistrate.</div>';
+  }
+
+  function updateDemoBanner(stations) {
+    const active = Object.entries(stations)
+      .filter(([, data]) => data.latest?.health?.demo_mode)
+      .map(([name]) => pretty(name));
+    $('demo-banner').hidden = !active.length;
+    if (active.length) {
+      $('demo-banner').textContent = `MOD DEMONSTRATIV ACTIV pe ${active.join(', ')} — degradarea accelerată este sintetică și marcată separat.`;
+    }
   }
 
   function renderEvents(events) {
@@ -347,12 +363,53 @@
     return data;
   }
 
+  async function sendMaintenanceCommand(action, station, component = 'station', notes = '') {
+    let token = sessionStorage.getItem('festo-control-token');
+    if (!token) {
+      token = window.prompt('Introdu codul de operator pentru comenzile simulatorului:');
+      if (!token) return;
+      sessionStorage.setItem('festo-control-token', token);
+    }
+    const controls = [$('demo-start'), $('demo-stop'), ...document.querySelectorAll('.maintenance-complete')];
+    controls.forEach(button => { button.disabled = true; });
+    $('command-feedback').className = 'command-feedback';
+    $('command-feedback').textContent = 'Comanda este trimisă către simulator...';
+    try {
+      const response = await fetch('/api/maintenance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Control-Token': token },
+        body: JSON.stringify({
+          action, station, component,
+          target: .68, duration_seconds: 600,
+          notes: notes || (action === 'accelerate_demo' ? 'Scenariu controlat pentru demonstrația UPB ACS' : '')
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        if (response.status === 403) sessionStorage.removeItem('festo-control-token');
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+      $('command-feedback').className = 'command-feedback success';
+      $('command-feedback').textContent = `Comanda #${result.id} a fost acceptată și va fi confirmată în istoric.`;
+      window.setTimeout(() => load(), 1800);
+    } catch (error) {
+      $('command-feedback').className = 'command-feedback error';
+      $('command-feedback').textContent = error.message;
+    } finally {
+      controls.forEach(button => { button.disabled = false; });
+    }
+  }
+
   async function populateStations(signal) {
     const live = await fetchJson('/api/live', signal);
     const selected = $('station').value;
     $('station').innerHTML = '<option value="">Toate modulele</option>' +
       Object.keys(live).sort().map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
     $('station').value = selected;
+    const controlSelected = $('maintenance-station').value;
+    $('maintenance-station').innerHTML = Object.keys(live).sort()
+      .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(pretty(name))}</option>`).join('');
+    if (live[controlSelected]) $('maintenance-station').value = controlSelected;
     return live;
   }
 
@@ -381,9 +438,10 @@
     if ($('station').value) params.set('station', $('station').value);
 
     try {
-      const [history, summary] = await Promise.all([
+      const [history, summary, maintenanceHistory] = await Promise.all([
         fetchJson('/api/history?' + new URLSearchParams([...params, ['resolution', '300']]), activeController.signal),
-        fetchJson('/api/summary?' + params, activeController.signal)
+        fetchJson('/api/summary?' + params, activeController.signal),
+        fetchJson('/api/maintenance?limit=30', activeController.signal)
       ]);
       if (thisRequest !== requestNumber) return;
 
@@ -393,7 +451,9 @@
       updateMetricOptions(lastRows);
       drawTrend(lastRows, start, end);
       renderStations(summary.stations || {});
-      renderMaintenance(summary.stations || {});
+      renderMaintenance(summary.maintenance || []);
+      renderMaintenanceHistory(maintenanceHistory.commands || [], start, end);
+      updateDemoBanner(summary.stations || {});
       renderEvents(summary.events || []);
       updateLineSummary(summary.line || {});
       $('connection').textContent = summary.count ? 'Sistem online' : 'Fără date în interval';
@@ -441,6 +501,25 @@
     setQuickButton(null);
     load();
   };
+  $('demo-start').onclick = () => {
+    const station = $('maintenance-station').value;
+    if (station && window.confirm(`Activezi timp de 10 minute degradarea sintetică pe ${pretty(station)}? Datele vor fi marcate ca DEMO.`)) {
+      sendMaintenanceCommand('accelerate_demo', station);
+    }
+  };
+  $('demo-stop').onclick = () => {
+    const station = $('maintenance-station').value;
+    if (station) sendMaintenanceCommand('stop_demo', station);
+  };
+  $('maintenance').addEventListener('click', event => {
+    const button = event.target.closest('.maintenance-complete');
+    if (!button) return;
+    const station = button.dataset.station;
+    const component = button.dataset.component;
+    if (!window.confirm(`Confirmi intervenția pe ${pretty(station)} / ${pretty(component)}? Uzura simulată va fi recalibrată.`)) return;
+    const notes = window.prompt('Observații pentru istoricul intervenției (opțional):', 'Inspecție și mentenanță preventivă efectuate') || '';
+    sendMaintenanceCommand('perform_maintenance', station, component, notes);
+  });
   $('station').onchange = load;
   $('station-sort').onchange = () => lastSummary && renderStations(lastSummary.stations || {});
   $('trend-metric').onchange = () => lastRange.length && drawTrend(lastRows, lastRange[0], lastRange[1]);

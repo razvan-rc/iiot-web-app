@@ -2,6 +2,8 @@ from flask import Flask, render_template, jsonify, request
 import pymysql
 import json
 import math
+import os
+import hmac
 from datetime import datetime, timezone
 
 app = Flask(__name__)
@@ -14,6 +16,26 @@ STATION_METRICS = {
     'Sorting': {'sorting_time_s': 's', 'classification_confidence_pct': '%'},
 }
 ACTIVE_STATIONS = tuple(STATION_METRICS)
+
+DB_READER_HOST = os.getenv('DB_READER_HOST', '172.31.45.5')
+DB_WRITER_HOST = os.getenv('DB_WRITER_HOST', '172.31.32.65')
+DB_USER = os.getenv('DB_USER', 'sensor_app')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'SenzorPass123!')
+DB_NAME = os.getenv('DB_NAME', 'industrial_db')
+MAINTENANCE_CONTROL_TOKEN = os.getenv('MAINTENANCE_CONTROL_TOKEN', '')
+
+MAINTENANCE_POLICIES = {
+    'Distributing': {'action': 'Inspectează cilindrul, presiunea pneumatică și capul vacuum.', 'duration_minutes': 15,
+                     'impact': 'Alimentarea se oprește; modulele din aval consumă temporar WIP-ul existent.'},
+    'Separating': {'action': 'Curăță și calibrează senzorul de culoare; verifică mecanismul de deviere.', 'duration_minutes': 20,
+                   'impact': 'Fluxul de intrare este blocat, iar modulele din aval pot rămâne fără recipiente.'},
+    'Bottling': {'action': 'Inspectează vana, debitul și opritorul; verifică etanșarea circuitului.', 'duration_minutes': 25,
+                 'impact': 'Umplerea este indisponibilă; se recomandă golirea controlată a bufferelor.'},
+    'Pick_and_Place': {'action': 'Verifică vacuumul, axele pneumatice și cuplul capului de înfiletare.', 'duration_minutes': 25,
+                       'impact': 'Aplicarea capacelor se oprește; Bottling va fi blocat după umplerea bufferului.'},
+    'Sorting': {'action': 'Curăță și calibrează senzorii de material/culoare; inspectează opritoarele.', 'duration_minutes': 20,
+                'impact': 'Evacuarea finală se oprește, iar linia va fi blocată progresiv din aval.'},
+}
 
 
 def read_latest_payloads():
@@ -29,15 +51,89 @@ def read_latest_payloads():
     finally:
         conn.close()
 
-def get_db_connection():
-    # Ne conectam mereu la SLAVE pentru citiri (Read-Replica)
+def get_db_connection(write=False):
+    # Telemetria și istoricul se citesc din replică; comenzile se scriu numai pe master.
     return pymysql.connect(
-        host='172.31.45.5',  # IP-ul Slave-ului tau
-        user='sensor_app',
-        password='SenzorPass123!',
-        database='industrial_db',
-        cursorclass=pymysql.cursors.DictCursor
+        host=DB_WRITER_HOST if write else DB_READER_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=write,
     )
+
+
+def maintenance_projection(name, summary, points):
+    latest = summary.get('latest') or {}
+    current = float(summary.get('health', {}).get('current_degradation') or 0)
+    state = latest.get('health', {}).get('state') or latest.get('state') or 'UNKNOWN'
+    faults = list((latest.get('health', {}).get('active_faults') or {}).keys())
+    components = latest.get('health', {}).get('components') or {}
+    component = min(components, key=components.get) if components else 'station'
+    policy = MAINTENANCE_POLICIES[name]
+    segment_start = 0
+    for index in range(1, len(points)):
+        profile_changed = points[index][2:] != points[index - 1][2:]
+        if profile_changed or points[index][1] < points[index - 1][1] - .03:
+            segment_start = index
+    segment = points[segment_start:]
+    slope = None
+    r_squared = None
+    span_hours = 0.0
+    if len(segment) >= 6:
+        origin = segment[0][0]
+        xs = [(point[0] - origin).total_seconds() / 3600.0 for point in segment]
+        ys = [point[1] for point in segment]
+        span_hours = xs[-1] - xs[0]
+        x_mean = sum(xs) / len(xs)
+        y_mean = sum(ys) / len(ys)
+        denominator = sum((value - x_mean) ** 2 for value in xs)
+        if denominator > 0 and span_hours >= 5 / 60:
+            slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / denominator
+            predicted = [y_mean + slope * (x - x_mean) for x in xs]
+            residual = sum((actual - estimate) ** 2 for actual, estimate in zip(ys, predicted))
+            total = sum((actual - y_mean) ** 2 for actual in ys)
+            r_squared = max(0.0, min(1.0, 1.0 - residual / total)) if total > 1e-12 else 1.0
+
+    target = .45 if current < .45 else (.82 if current < .82 else .90)
+    reliable_slope = slope is not None and slope > .0001 and r_squared is not None and r_squared >= .25
+    rul_hours = max(0.0, (target - current) / slope) if reliable_slope else None
+    if rul_hours is not None:
+        rul_hours = min(rul_hours, 9999.0)
+    requires_stop = state in ('FAULT', 'FAILURE') or current >= .90
+    if requires_stop:
+        priority, window = 'CRITICAL', 'Acum — oprire controlată a modulului'
+    elif current >= .65 or faults or (rul_hours is not None and rul_hours <= 4):
+        priority = 'HIGH'
+        window = 'La următoarea oprire planificată' if rul_hours is None else f'În maximum {max(1, math.ceil(rul_hours))} h'
+    elif current >= .45 or (rul_hours is not None and rul_hours <= 24):
+        priority, window = 'MEDIUM', 'Planifică intervenția în următoarea fereastră de producție'
+    elif rul_hours is not None and rul_hours <= 168:
+        priority, window = 'MEDIUM', f'În aproximativ {max(1, math.ceil(rul_hours / 24))} zile'
+    else:
+        priority, window = 'LOW', 'Monitorizare; fără intervenție în următoarele 7 zile'
+    if slope is None:
+        confidence = 'INSUFFICIENT_DATA'
+    elif r_squared >= .75 and span_hours >= .5:
+        confidence = 'HIGH'
+    elif r_squared >= .4:
+        confidence = 'MEDIUM'
+    else:
+        confidence = 'LOW'
+    evidence = (
+        'Sunt necesare cel puțin 5 minute și 6 probe pentru estimarea trendului.'
+        if slope is None else
+        f'Trend {slope * 100:+.2f} pp/oră pe {span_hours:.1f} h; R²={r_squared:.2f}. Degradare curentă {current * 100:.1f}%.'
+    )
+    return {
+        'station': name, 'component': component, 'action': policy['action'],
+        'duration_minutes': policy['duration_minutes'], 'production_impact': policy['impact'],
+        'priority': priority, 'recommended_window': window, 'requires_stop': requires_stop,
+        'current_degradation': round(current, 4), 'threshold': target,
+        'slope_per_hour': round(slope, 6) if slope is not None else None,
+        'rul_hours': round(rul_hours, 1) if rul_hours is not None else None,
+        'confidence': confidence, 'evidence': evidence, 'faults': faults,
+    }
 
 
 def parse_datetime(value, default):
@@ -218,6 +314,7 @@ def api_summary():
 
         summaries = {}
         payloads_by_station = {}
+        degradation_points = {}
         for row in sampled_rows:
             payload = json.loads(row['payload_json'])
             name = row['station_name']
@@ -246,6 +343,11 @@ def api_summary():
 
             health = payload.get('health') or {}
             score = float(health.get('degradation_score', 0) or 0)
+            degradation_points.setdefault(name, []).append((
+                row['timestamp'], score,
+                health.get('wear_cycle_hours'),
+                bool(health.get('demo_mode')),
+            ))
             summary['health']['average_degradation'] += score * weight
             summary['health']['peak_degradation'] = max(summary['health']['peak_degradation'], score)
             if summary['_first_degradation'] is None:
@@ -357,6 +459,11 @@ def api_summary():
             else 'DEGRADED' if worst_current >= .45
             else 'ONLINE'
         )
+        maintenance = sorted(
+            (maintenance_projection(name, summary, degradation_points.get(name, [])) for name, summary in summaries.items()),
+            key=lambda item: ({'CRITICAL': 3, 'HIGH': 2, 'MEDIUM': 1, 'LOW': 0}[item['priority']], item['current_degradation']),
+            reverse=True,
+        )
         result = {
             'from': start.isoformat() + 'Z',
             'to': end.isoformat() + 'Z',
@@ -382,6 +489,7 @@ def api_summary():
                 'oee_pct': round(oee_pct, 2),
                 'operational_state': freshest_payload.get('line', {}).get('operational', {}).get('state'),
             },
+            'maintenance': maintenance,
             'events': events[:50],
         }
         return jsonify(result)
@@ -389,6 +497,80 @@ def api_summary():
         return jsonify({'error': f'Parametri invalizi: {e}'}), 400
     except Exception as e:
         return jsonify({'error': str(e), 'tip_eroare': str(type(e))}), 500
+
+@app.route('/api/maintenance', methods=['GET', 'POST'])
+def api_maintenance():
+    try:
+        if request.method == 'GET':
+            limit = min(max(int(request.args.get('limit', 30)), 1), 100)
+            conn = get_db_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """SELECT id, created_at, station_name, action_type, component, status,
+                                  requested_by, notes, applied_at, parameters_json, result_json
+                           FROM maintenance_commands ORDER BY id DESC LIMIT %s""",
+                        (limit,),
+                    )
+                    rows = cursor.fetchall()
+            finally:
+                conn.close()
+            for row in rows:
+                for field in ('created_at', 'applied_at'):
+                    if row[field]:
+                        row[field] = row[field].isoformat() + 'Z'
+                for field in ('parameters_json', 'result_json'):
+                    if isinstance(row[field], str):
+                        row[field] = json.loads(row[field])
+            return jsonify({'commands': rows})
+
+        if not MAINTENANCE_CONTROL_TOKEN:
+            return jsonify({'error': 'Comenzile de mentenanță nu sunt configurate pe server.'}), 503
+        provided_token = request.headers.get('X-Control-Token', '')
+        if not hmac.compare_digest(provided_token, MAINTENANCE_CONTROL_TOKEN):
+            return jsonify({'error': 'Codul de operator este invalid.'}), 403
+
+        payload = request.get_json(silent=True) or {}
+        public_action = payload.get('action')
+        actions = {
+            'accelerate_demo': 'DEMO_ACCELERATE',
+            'stop_demo': 'DEMO_RESET',
+            'perform_maintenance': 'PERFORM_MAINTENANCE',
+        }
+        if public_action not in actions:
+            raise ValueError('acțiune necunoscută')
+        station = payload.get('station')
+        if station not in ACTIVE_STATIONS:
+            raise ValueError('modul necunoscut')
+        component = str(payload.get('component') or 'station')[:64]
+        notes = str(payload.get('notes') or '')[:500]
+        parameters = {}
+        if public_action == 'accelerate_demo':
+            parameters = {
+                'target': min(max(float(payload.get('target', .68)), .45), .78),
+                'duration_seconds': min(max(int(payload.get('duration_seconds', 600)), 60), 900),
+            }
+        elif public_action == 'perform_maintenance':
+            parameters = {'hold_seconds': 12}
+
+        conn = get_db_connection(write=True)
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """INSERT INTO maintenance_commands
+                       (station_name, action_type, component, status, requested_by, notes, parameters_json)
+                       VALUES (%s, %s, %s, 'PENDING', 'dashboard', %s, %s)""",
+                    (station, actions[public_action], component, notes, json.dumps(parameters)),
+                )
+                command_id = cursor.lastrowid
+        finally:
+            conn.close()
+        return jsonify({'id': command_id, 'status': 'PENDING'}), 202
+    except (ValueError, TypeError) as e:
+        return jsonify({'error': f'Cerere invalidă: {e}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e), 'tip_eroare': str(type(e))}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
