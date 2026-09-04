@@ -21,18 +21,11 @@ def read_latest_payloads():
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            placeholders = ','.join(['%s'] * len(ACTIVE_STATIONS))
-            cursor.execute(
-                f"""SELECT station_name, payload_json
-                    FROM (
-                        SELECT station_name, payload_json,
-                               ROW_NUMBER() OVER (PARTITION BY station_name ORDER BY timestamp DESC) AS rn
-                        FROM festo_telemetry
-                        WHERE station_name IN ({placeholders})
-                    ) latest
-                    WHERE rn = 1""",
-                ACTIVE_STATIONS,
-            )
+            latest_queries = [
+                '(SELECT station_name, payload_json FROM festo_telemetry WHERE station_name=%s ORDER BY id DESC LIMIT 1)'
+                for _ in ACTIVE_STATIONS
+            ]
+            cursor.execute(' UNION ALL '.join(latest_queries), ACTIVE_STATIONS)
             return {row['station_name']: json.loads(row['payload_json']) for row in cursor.fetchall()}
     finally:
         conn.close()
