@@ -153,6 +153,7 @@ def api_summary():
                 'station': name, 'samples': 0, 'first_seen': None, 'last_seen': None,
                 'health': {'latest': None, 'average_degradation': 0, 'peak_degradation': 0},
                 'metrics': {}, 'faults': {}, 'events': {}, 'process_states': {},
+                'operational': {'latest_state': None, 'cycle_count': 0, 'cycle_rate_per_min': 0, 'availability_pct': 0, 'fault_count': 0, 'data_quality': 'GOOD'},
             })
             timestamp = row['timestamp'].isoformat() + 'Z'
             summary['samples'] += 1
@@ -171,6 +172,14 @@ def api_summary():
                 summary['events'][code] = summary['events'].get(code, 0) + 1
             process_state = payload.get('process', {}).get('state', 'UNKNOWN')
             summary['process_states'][process_state] = summary['process_states'].get(process_state, 0) + 1
+            operational = payload.get('operational', {})
+            summary['operational']['latest_state'] = summary['operational']['latest_state'] or operational.get('operational_state', process_state)
+            summary['operational']['cycle_count'] = max(summary['operational']['cycle_count'], int(operational.get('cycle_count', 0) or 0))
+            summary['operational']['cycle_rate_per_min'] = max(summary['operational']['cycle_rate_per_min'], float(operational.get('cycle_rate_per_min', 0) or 0))
+            summary['operational']['availability_pct'] = max(summary['operational']['availability_pct'], float(operational.get('availability_pct', 0) or 0))
+            summary['operational']['fault_count'] = max(summary['operational']['fault_count'], int(operational.get('fault_count', 0) or 0))
+            if operational.get('data_quality') != 'GOOD':
+                summary['operational']['data_quality'] = operational.get('data_quality', 'UNKNOWN')
             measurements = payload.get('measurements', {})
             baseline = payload.get('baseline', {})
             for metric, unit in STATION_METRICS.get(name, {}).items():
@@ -184,6 +193,8 @@ def api_summary():
                 item['average'] += value
 
         for summary in summaries.values():
+            summary['operational']['cycle_rate_per_min'] = round(summary['operational']['cycle_rate_per_min'], 2)
+            summary['operational']['availability_pct'] = round(summary['operational']['availability_pct'], 2)
             summary['health']['average_degradation'] = round(summary['health']['average_degradation'] / summary['samples'], 4)
             summary['health']['peak_degradation'] = round(summary['health']['peak_degradation'], 4)
             summary['health']['latest'] = round(summary['health']['latest'], 4)
