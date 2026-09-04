@@ -229,7 +229,7 @@ def api_summary():
                 'first_seen': row['timestamp'].isoformat() + 'Z',
                 'last_seen': row['timestamp'].isoformat() + 'Z',
                 'latest': payload,
-                'health': {'average_degradation': 0, 'peak_degradation': 0},
+                'health': {'current_degradation': 0, 'average_degradation': 0, 'peak_degradation': 0, 'change_in_range': 0},
                 'operational': {
                     'cycles_in_range': 0,
                     'average_cycle_rate_per_min': 0,
@@ -238,6 +238,7 @@ def api_summary():
                 },
                 '_rate_weight': 0,
                 '_availability_weight': 0,
+                '_first_degradation': None,
             })
             summary['samples'] += weight
             summary['last_seen'] = row['timestamp'].isoformat() + 'Z'
@@ -247,6 +248,9 @@ def api_summary():
             score = float(health.get('degradation_score', 0) or 0)
             summary['health']['average_degradation'] += score * weight
             summary['health']['peak_degradation'] = max(summary['health']['peak_degradation'], score)
+            if summary['_first_degradation'] is None:
+                summary['_first_degradation'] = score
+            summary['health']['current_degradation'] = score
 
             operational = payload.get('operational') or {}
             rate = operational.get('cycle_rate_per_min')
@@ -269,6 +273,10 @@ def api_summary():
             )
             summary['health']['peak_degradation'] = round(summary['health']['peak_degradation'], 4)
             rate_weight = summary.pop('_rate_weight')
+            first_degradation = summary.pop('_first_degradation')
+            summary['health']['current_degradation'] = round(summary['health']['current_degradation'], 4)
+            summary['health']['change_in_range'] = round(
+                summary['health']['current_degradation'] - (first_degradation or 0), 4)
             availability_weight = summary.pop('_availability_weight')
             summary['operational']['average_cycle_rate_per_min'] = round(
                 summary['operational']['average_cycle_rate_per_min'] / rate_weight, 2
@@ -342,11 +350,11 @@ def api_summary():
             for event in payload.get('events') or []:
                 events.append({'station': row['station_name'], 'timestamp': event_time, **event})
 
-        worst_peak = max((summary['health']['peak_degradation'] for summary in summaries.values()), default=0)
+        worst_current = max((summary['health']['current_degradation'] for summary in summaries.values()), default=0)
         line_state = (
             'FĂRĂ DATE' if not summaries
-            else 'CRITICAL' if worst_peak >= .75
-            else 'DEGRADED' if worst_peak >= .45
+            else 'CRITICAL' if worst_current >= .82
+            else 'DEGRADED' if worst_current >= .45
             else 'ONLINE'
         )
         result = {

@@ -201,65 +201,108 @@
   $('chart').addEventListener('mouseleave', () => { $('chart-tooltip').hidden = true; });
 
   function classForScore(score, state = '') {
-    return score >= .75 || state === 'FAILURE' || state === 'CRITICAL'
+    return score >= .82 || state === 'FAILURE' || state === 'FAULT'
       ? 'critical'
       : score >= .45 || state === 'DEGRADED' ? 'high' : '';
+  }
+
+  function currentScore(data) {
+    const latest = data.latest || {};
+    return Number(data.health?.current_degradation ?? latest.health?.degradation_score ?? 0);
+  }
+
+  function metricDisplay(name, value) {
+    if (typeof value === 'boolean') return value ? 'DA' : 'NU';
+    if (typeof value === 'number') return `${format(value)}${metricUnits[name] ? ` ${metricUnits[name]}` : ''}`;
+    return pretty(value || '--');
   }
 
   function renderStations(stations) {
     const entries = Object.entries(stations);
     const sort = $('station-sort').value;
+    const moduleOrder = { Distributing: 1, Separating: 2, Bottling: 3, Pick_and_Place: 4, Sorting: 5 };
+    const descriptions = {
+      Distributing: 'Preluare recipient cu axă motorizată și cap vacuum; transfer către prima bandă.',
+      Separating: 'Detecție prezență și culoare; continuare pe flux sau deviere pe banda secundară.',
+      Bottling: 'Poziționare cu opritor, dozare temporizată și compensare după nivelul rezervorului.',
+      Pick_and_Place: 'Poziționare, preluare capac și înfiletare cu un cap pneumatic pe trei axe.',
+      Sorting: 'Detecție material și culoare; rutare finală cu două opritoare către trei ieșiri.'
+    };
     entries.sort(([nameA, dataA], [nameB, dataB]) => {
       if (sort === 'name') return nameA.localeCompare(nameB);
-      const valueA = sort === 'degradation' ? dataA.health.average_degradation : dataA.health.peak_degradation;
-      const valueB = sort === 'degradation' ? dataB.health.average_degradation : dataB.health.peak_degradation;
+      const valueA = sort === 'degradation' ? dataA.health?.average_degradation || 0 : currentScore(dataA);
+      const valueB = sort === 'degradation' ? dataB.health?.average_degradation || 0 : currentScore(dataB);
       return valueB - valueA;
     });
+
     $('stations').innerHTML = entries.length ? entries.map(([name, data]) => {
       const latest = data.latest || {};
-      const average = data.health?.average_degradation || 0;
-      const peak = data.health?.peak_degradation || 0;
+      const current = currentScore(data);
+      const average = Number(data.health?.average_degradation || 0);
+      const peak = Number(data.health?.peak_degradation || 0);
+      const change = Number(data.health?.change_in_range || 0);
       const state = latest.health?.state || latest.state || 'UNKNOWN';
-      const kind = classForScore(peak, state);
+      const process = latest.operational?.operational_state || latest.process?.state || '--';
+      const kind = classForScore(current, state);
       const operational = data.operational || {};
-      return `<article class="station ${kind}">
-        <div class="station-top"><h3>${escapeHtml(name)}</h3><span class="badge ${kind === 'critical' ? 'danger' : kind ? 'warn' : ''}">${escapeHtml(state)}</span></div>
-        <div class="meter"><i style="width:${Math.min(average * 100, 100)}%"></i></div>
-        <div class="metrics">
-          <span>Degradare medie<b>${(average * 100).toFixed(1)}%</b></span>
-          <span>Vârf degradare<b>${(peak * 100).toFixed(1)}%</b></span>
-          <span>Proces la final<b>${escapeHtml(latest.operational?.operational_state || latest.process?.state || '--')}</b></span>
-          <span>Cicluri în interval<b>${format(operational.cycles_in_range ?? 0)}</b></span>
-          <span>Ritm mediu<b>${format(operational.average_cycle_rate_per_min ?? 0)}/min</b></span>
-          <span>Disponibilitate medie<b>${format(operational.average_availability_pct ?? 0)}%</b></span>
-          <span>Faulturi maxime<b>${format(operational.peak_fault_count ?? 0)}</b></span>
-          <span>Probe în interval<b>${format(data.samples ?? 0)}</b></span>
+      const measurements = Object.entries(latest.measurements || {}).slice(0, 8);
+      const components = Object.entries(latest.health?.components || {});
+      const activeFaults = Object.entries(latest.health?.active_faults || {});
+      const activeInputs = Object.entries(latest.inputs || {}).filter(([, value]) => value === true);
+      const activeOutputs = Object.entries(latest.outputs || {}).filter(([, value]) => value === true);
+      const inputCount = Object.keys(latest.inputs || {}).length;
+      const outputCount = Object.keys(latest.outputs || {}).length;
+      const activeSignals = [...activeInputs.map(([signal]) => `I: ${pretty(signal)}`), ...activeOutputs.map(([signal]) => `O: ${pretty(signal)}`)].slice(0, 6);
+      const trendClass = change > .01 ? 'trend-up' : change < -.01 ? 'trend-down' : 'trend-flat';
+      const trendText = `${change > 0 ? '+' : ''}${(change * 100).toFixed(1)} pp`;
+      const lastSeen = data.last_seen ? new Date(data.last_seen).toLocaleString('ro-RO') : '--';
+
+      return `<article class="station module-card ${kind}">
+        <div class="module-header">
+          <div class="station-identity"><span class="module-number">Modul ${moduleOrder[name] || '--'}</span><h3>${escapeHtml(pretty(name))}</h3><p>${escapeHtml(descriptions[name] || '')}</p></div>
+          <div class="status-stack"><span class="badge ${kind === 'critical' ? 'danger' : kind ? 'warn' : ''}">${escapeHtml(state)}</span><span class="process-pill">${escapeHtml(pretty(process))}</span></div>
         </div>
+        <div class="health-overview">
+          <div class="health-primary"><small>Degradare curentă</small><strong>${(current * 100).toFixed(1)}%</strong><div class="meter"><i style="width:${Math.min(current * 100, 100)}%"></i></div><span>Sănătate estimată ${(Math.max(0, 1 - current) * 100).toFixed(1)}%</span></div>
+          <div class="health-stat"><small>Tendință interval</small><b class="${trendClass}">${trendText}</b></div>
+          <div class="health-stat"><small>Medie interval</small><b>${(average * 100).toFixed(1)}%</b></div>
+          <div class="health-stat historical"><small>Vârf interval · informativ</small><b>${(peak * 100).toFixed(1)}%</b></div>
+        </div>
+        <div class="module-grid">
+          <section class="module-section"><h4>Performanță în interval</h4><div class="detail-list"><span>Cicluri<b>${format(operational.cycles_in_range ?? 0)}</b></span><span>Ritm mediu<b>${format(operational.average_cycle_rate_per_min ?? 0)}/min</b></span><span>Disponibilitate<b>${format(operational.average_availability_pct ?? 0)}%</b></span><span>Probe analizate<b>${format(data.samples ?? 0)}</b></span></div></section>
+          <section class="module-section"><h4>Măsurători curente</h4><div class="detail-list">${measurements.length ? measurements.map(([metric, value]) => `<span>${escapeHtml(pretty(metric))}<b>${escapeHtml(metricDisplay(metric, value))}</b></span>`).join('') : '<p class="empty-compact">Încă nu există o măsurătoare completă.</p>'}</div></section>
+          <section class="module-section"><h4>Semnale PLC / I/O</h4><div class="io-counts"><span>Intrări active <b>${activeInputs.length}/${inputCount}</b></span><span>Ieșiri active <b>${activeOutputs.length}/${outputCount}</b></span></div><div class="signal-list">${activeSignals.length ? activeSignals.map(signal => `<span>${escapeHtml(signal)}</span>`).join('') : '<span>Niciun semnal activ</span>'}</div></section>
+          <section class="module-section"><h4>Sănătate componente</h4><div class="component-list">${components.length ? components.map(([component, health]) => `<div><span>${escapeHtml(pretty(component))}<b>${(Number(health) * 100).toFixed(0)}%</b></span><i><em style="width:${Math.max(0, Math.min(100, Number(health) * 100))}%"></em></i></div>`).join('') : '<p class="empty-compact">Fără date pe componente.</p>'}</div></section>
+        </div>
+        <div class="module-footer"><span>Ultima probă: ${escapeHtml(lastSeen)}</span>${activeFaults.length ? `<strong class="fault-banner">Fault activ: ${activeFaults.map(([fault, severity]) => `${escapeHtml(pretty(fault))} (${(Number(severity) * 100).toFixed(0)}%)`).join(', ')}</strong>` : '<strong class="healthy-banner">Fără faulturi active</strong>'}</div>
       </article>`;
-    }).join('') : '<div class="empty">Nu există date de stație în intervalul selectat.</div>';
+    }).join('') : '<div class="empty">Nu există date de modul în intervalul selectat.</div>';
   }
 
   function renderMaintenance(stations) {
     const items = Object.entries(stations).map(([name, data]) => {
       const latest = data.latest || {};
-      const score = data.health?.peak_degradation || 0;
-      const fault = Object.keys(latest.health?.active_faults || {})[0];
-      if (score < .25 && !fault) return null;
-      const advice = maintenanceAdvice[fault] || ['Echipament', 'Execută inspecția vizuală și verifică valorile de bază'];
+      const score = currentScore(data);
+      const state = latest.health?.state || latest.state || 'UNKNOWN';
+      const faults = Object.keys(latest.health?.active_faults || {});
+      const fault = faults[0];
+      const requiresStop = ['FAULT', 'FAILURE'].includes(state) || score >= .9;
+      if (score < .45 && !fault && !requiresStop) return null;
+      const advice = maintenanceAdvice[fault] || ['Echipament', 'Inspectează modulul și compară măsurătorile cu valorile de bază'];
       return {
-        name, score, fault, component: advice[0],
-        action: score >= .75 ? 'Oprește linia și deschide ordin de lucru' : advice[1],
-        due: score >= .75 ? 'Acum' : score >= .45 ? 'În 24h' : 'În 7 zile'
+        name, score, fault, state, component: advice[0],
+        action: requiresStop ? `Izolează în siguranță modulul ${pretty(name)} și deschide un ordin de lucru` : advice[1],
+        due: requiresStop ? 'Acum' : score >= .65 || fault ? 'La următoarea oprire' : 'În 7 zile'
       };
     }).filter(Boolean).sort((a, b) => b.score - a.score);
 
-    $('maintenance').innerHTML = items.length ? items.map(item => {
-      const kind = classForScore(item.score);
+    $('maintenance').innerHTML = items.length ? `<p class="maintenance-note">Planul folosește degradarea curentă și faulturile active. Vârfurile istorice nu declanșează opriri.</p>${items.map(item => {
+      const kind = classForScore(item.score, item.state);
       return `<div class="task ${kind === 'critical' ? 'danger' : kind ? 'warn' : ''}"><i></i><div>
-        <strong>${escapeHtml(item.name)}: ${escapeHtml(item.action)}</strong>
-        <span>Componentă: ${escapeHtml(item.component)} · Vârf degradare ${(item.score * 100).toFixed(1)}%${item.fault ? ` · cod: ${escapeHtml(pretty(item.fault))}` : ''}</span>
+        <strong>${escapeHtml(item.action)}</strong>
+        <span>${escapeHtml(item.name)} · ${escapeHtml(item.component)} · degradare curentă ${(item.score * 100).toFixed(1)}%${item.fault ? ` · ${escapeHtml(pretty(item.fault))}` : ''}</span>
       </div><span class="due">${item.due}</span></div>`;
-    }).join('') : '<div class="empty">Nicio intervenție recomandată în intervalul selectat.</div>';
+    }).join('')}` : '<div class="maintenance-ok"><strong>Nicio intervenție necesară acum</strong><span>Modulele nu au faulturi active și degradarea curentă este sub pragul de mentenanță.</span></div>';
     $('actions').textContent = items.length;
   }
 
