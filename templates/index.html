@@ -20,7 +20,7 @@
   <header><div><div class="eyebrow">Production intelligence / line 01</div><h1>Festo Operations Console</h1><p>Stare, tendințe și mentenanță preventivă într-o singură vedere.</p></div><div class="signal"><span class="dot"></span><span id="connection">Sistem online</span></div></header>
   <main>
     <section class="toolbar"><div class="quick"><button data-hours="1">1H</button><button data-hours="8">8H</button><button class="active" data-hours="24">24H</button><button data-hours="168">7 ZILE</button></div><label>De la<input id="from" type="datetime-local"></label><label>Până la<input id="to" type="datetime-local"></label><label>Stație<select id="station"><option value="">Toate stațiile</option></select></label><button id="apply">Actualizează</button></section>
-    <section class="kpis"><div class="kpi"><small>Stare linie</small><strong id="line-state" class="ok">ONLINE</strong></div><div class="kpi"><small>Producție bună</small><strong id="good">--</strong></div><div class="kpi"><small>Rată calitate</small><strong id="quality">--</strong></div><div class="kpi"><small>Intervenții recomandate</small><strong id="actions" class="warn">--</strong></div></section>
+    <section class="kpis"><div class="kpi"><small>Stare linie</small><strong id="line-state" class="ok">ONLINE</strong></div><div class="kpi"><small>Producție bună</small><strong id="good">--</strong></div><div class="kpi"><small>Rată calitate</small><strong id="quality">--</strong></div><div class="kpi"><small>Throughput bottleneck</small><strong id="throughput">--</strong><small id="bottleneck">--</small></div><div class="kpi"><small>WIP linie</small><strong id="wip">--</strong></div><div class="kpi"><small>Alarme active</small><strong id="alarms" class="warn">--</strong></div><div class="kpi"><small>Freshness date</small><strong id="freshness">--</strong></div><div class="kpi"><small>Intervenții recomandate</small><strong id="actions" class="warn">--</strong></div></section>
     <section class="layout"><div class="panel trend-panel"><div class="trend-heading"><h2>Trend instalație</h2><label>Indicator<select id="trend-metric"><option value="degradation">Degradare</option></select></label></div><div class="chart-wrap"><canvas id="chart"></canvas><div id="chart-empty" class="chart-empty" hidden>Nu există probe pentru selecția curentă.<br>Alege un interval mai larg sau altă stație.</div><div id="chart-tooltip" class="chart-tooltip" hidden></div></div><div id="legend" class="chart-meta"></div></div><div class="panel"><h2>Plan mentenanță</h2><div id="maintenance" class="maintenance"></div></div></section>
     <section class="panel" style="margin-top:16px"><div class="section-heading"><h2>Stare stații</h2><label>Sortare<select id="station-sort"><option value="risk">Risc</option><option value="degradation">Degradare</option><option value="name">Nume</option></select></label></div><div id="stations" class="stations"></div></section><section class="panel events"><h2>Evenimente recente</h2><div id="events"></div></section><footer id="updated">Se conectează la sistem...</footer>
   </main>
@@ -110,7 +110,20 @@
       }
     }
     document.querySelectorAll('[data-hours]').forEach(button => button.onclick = () => applyQuickRange(Number(button.dataset.hours)));
+    function updateLineSummary(summary) {
+      const production = summary.production || {};
+      $('good').textContent = format(production.good ?? '--');
+      $('quality').textContent = production.quality_rate != null ? `${(production.quality_rate * 100).toFixed(1)}%` : '--';
+      $('throughput').textContent = `${summary.throughput_per_min ?? 0}/min`;
+      $('wip').textContent = summary.wip?.total ?? '--';
+      $('alarms').textContent = summary.active_alarms ?? '--';
+      $('bottleneck').textContent = summary.bottleneck || '--';
+      $('freshness').textContent = summary.freshness_seconds == null ? '--' : `${summary.freshness_seconds}s`;
+    }
+    function refreshLineSummary() { fetch('/api/line-summary').then(response => response.json()).then(updateLineSummary).catch(() => {}); }
     fetch('/api/live').then(response => response.json()).then(updateMetricOptions).catch(() => {});
+    refreshLineSummary();
+    setInterval(refreshLineSummary, 30000);
   </script>
 </body>
 </html>

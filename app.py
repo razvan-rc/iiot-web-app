@@ -14,6 +14,27 @@ STATION_METRICS = {
 }
 ACTIVE_STATIONS = tuple(STATION_METRICS)
 
+
+def read_latest_payloads():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            placeholders = ','.join(['%s'] * len(ACTIVE_STATIONS))
+            cursor.execute(
+                f"""SELECT station_name, payload_json
+                    FROM (
+                        SELECT station_name, payload_json,
+                               ROW_NUMBER() OVER (PARTITION BY station_name ORDER BY timestamp DESC) AS rn
+                        FROM festo_telemetry
+                        WHERE station_name IN ({placeholders})
+                    ) latest
+                    WHERE rn = 1""",
+                ACTIVE_STATIONS,
+            )
+            return {row['station_name']: json.loads(row['payload_json']) for row in cursor.fetchall()}
+    finally:
+        conn.close()
+
 def get_db_connection():
     # Ne conectam mereu la SLAVE pentru citiri (Read-Replica)
     return pymysql.connect(
@@ -39,31 +60,38 @@ def index():
 @app.route('/api/live')
 def api_live():
     try:
-        conn = get_db_connection()
-        latest_data = {}
-        with conn.cursor() as cursor:
-            sql = """
-                SELECT station_name, payload_json 
-                FROM (
-                    SELECT station_name, payload_json,
-                           ROW_NUMBER() OVER (PARTITION BY station_name ORDER BY timestamp DESC) as rn
-                    FROM festo_telemetry
-                    WHERE station_name IN ({})
-                ) tmp 
-                WHERE rn = 1;
-            """
-            cursor.execute(sql.format(','.join(['%s'] * len(ACTIVE_STATIONS))), ACTIVE_STATIONS)
-            results = cursor.fetchall()
-
-            for row in results:
-                latest_data[row['station_name']] = json.loads(row['payload_json'])
-        
-        conn.close()
-        return jsonify(latest_data)
+        return jsonify(read_latest_payloads())
         
     except Exception as e:
         # Acum vom vedea eroarea clara pe ecran in format JSON
         return jsonify({"error": str(e), "tip_eroare": str(type(e))}), 500
+
+
+@app.route('/api/line-summary')
+def api_line_summary():
+    try:
+        latest = read_latest_payloads()
+        latest_payload = max(latest.values(), key=lambda payload: payload.get('timestamp', '')) if latest else {}
+        production = latest_payload.get('line', {}).get('production', {})
+        wip = next((payload.get('line', {}).get('wip') for payload in latest.values() if payload.get('line', {}).get('wip')), {})
+        alarms = sum(len(payload.get('health', {}).get('active_faults', {})) for payload in latest.values())
+        stale = sum(1 for payload in latest.values() if payload.get('operational', {}).get('data_quality') not in (None, 'GOOD'))
+        cycle_rates = [float(payload.get('operational', {}).get('cycle_rate_per_min', 0) or 0) for payload in latest.values()]
+        timestamps = [datetime.fromisoformat(payload['timestamp'].replace('Z', '+00:00')) for payload in latest.values() if payload.get('timestamp')]
+        freshest = max(timestamps) if timestamps else None
+        freshness_seconds = round((datetime.now(timezone.utc) - freshest).total_seconds(), 1) if freshest else None
+        return jsonify({
+            'stations': len(latest),
+            'production': production,
+            'wip': wip,
+            'active_alarms': alarms,
+            'data_quality': 'DEGRADED' if stale else 'GOOD',
+            'throughput_per_min': round(min(cycle_rates), 2) if cycle_rates else 0,
+            'bottleneck': min(latest, key=lambda name: latest[name].get('operational', {}).get('cycle_rate_per_min', 0)) if latest else None,
+            'freshness_seconds': freshness_seconds,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'tip_eroare': str(type(e))}), 500
 
 
 @app.route('/api/history')
