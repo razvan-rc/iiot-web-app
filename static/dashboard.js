@@ -265,7 +265,7 @@
 
   function renderEvents(events) {
     $('events').innerHTML = events.length
-      ? `<table><thead><tr><th>Data și ora</th><th>Stație</th><th>Eveniment</th><th>Severitate</th></tr></thead><tbody>${events.slice(0, 12).map(event =>
+      ? `<table><thead><tr><th>Data și ora</th><th>Modul</th><th>Eveniment</th><th>Severitate</th></tr></thead><tbody>${events.slice(0, 12).map(event =>
           `<tr><td>${new Date(event.timestamp).toLocaleString('ro-RO')}</td><td>${escapeHtml(event.station)}</td><td>${escapeHtml(pretty(event.code || 'UNKNOWN'))}</td><td>${escapeHtml(event.severity || '--')}</td></tr>`
         ).join('')}</tbody></table>`
       : '<div class="empty">Nu există evenimente în intervalul selectat.</div>';
@@ -306,7 +306,7 @@
   async function populateStations(signal) {
     const live = await fetchJson('/api/live', signal);
     const selected = $('station').value;
-    $('station').innerHTML = '<option value="">Toate stațiile</option>' +
+    $('station').innerHTML = '<option value="">Toate modulele</option>' +
       Object.keys(live).sort().map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
     $('station').value = selected;
     return live;

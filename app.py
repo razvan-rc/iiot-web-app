@@ -56,7 +56,7 @@ def query_range():
         raise ValueError('„from” trebuie să fie înainte de „to”')
     station = request.args.get('station') or None
     if station and station not in ACTIVE_STATIONS:
-        raise ValueError('stație necunoscută')
+        raise ValueError('modul necunoscut')
     return start, end, station
 
 
