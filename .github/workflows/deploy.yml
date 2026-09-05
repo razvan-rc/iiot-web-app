@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
     - name: Execute deployment commands via SSH
@@ -25,3 +26,29 @@ jobs:
           source venv/bin/activate
           pip install -r requirements.txt
           sudo systemctl restart iiot-web
+          sudo systemctl is-active --quiet iiot-web
+          curl --fail --silent --show-error \
+            --retry 6 --retry-delay 2 --retry-connrefused \
+            http://127.0.0.1:5000/api/live > /dev/null
+
+    - name: Verify public HTTPS and telemetry
+      shell: bash
+      run: |
+        set -euo pipefail
+        response="$(curl --fail --silent --show-error \
+          --retry 12 --retry-delay 5 --retry-all-errors \
+          https://project-razvan.com/api/live)"
+        python3 -c '
+        import json
+        import sys
+
+        expected = {
+            "Distributing", "Separating", "Bottling",
+            "Pick_and_Place", "Sorting",
+        }
+        payload = json.loads(sys.argv[1])
+        missing = sorted(expected - payload.keys())
+        if missing:
+            raise SystemExit(f"Missing telemetry modules: {missing}")
+        print(f"HTTPS health check passed: {len(expected)} modules available")
+        ' "$response"
