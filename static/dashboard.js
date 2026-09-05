@@ -456,6 +456,8 @@
     const button = $('apply');
     button.disabled = true;
     button.textContent = 'Se încarcă...';
+    $('connection').textContent = 'Se actualizează...';
+    $('updated').textContent = 'Se încarcă intervalul selectat...';
 
     const params = new URLSearchParams({
       from: start.toISOString(),
@@ -464,12 +466,22 @@
     if ($('station').value) params.set('station', $('station').value);
 
     try {
-      const [history, summary, maintenanceHistory] = await Promise.all([
-        fetchJson('/api/history?' + new URLSearchParams([...params, ['resolution', '300']]), activeController.signal),
-        fetchJson('/api/summary?' + params, activeController.signal),
-        fetchJson('/api/maintenance?limit=30', activeController.signal)
-      ]);
+      // The small audit request must not delay the main dashboard.
+      fetchJson('/api/maintenance?limit=30', activeController.signal)
+        .then(maintenanceHistory => {
+          if (thisRequest === requestNumber) {
+            renderMaintenanceHistory(maintenanceHistory.commands || [], start, end);
+          }
+        })
+        .catch(error => {
+          if (error.name !== 'AbortError' && thisRequest === requestNumber) {
+            $('maintenance-history').textContent = 'Istoricul nu este disponibil momentan.';
+            $('actions').textContent = '--';
+          }
+        });
+      const summary = await fetchJson('/api/dashboard?' + params, activeController.signal);
       if (thisRequest !== requestNumber) return;
+      const history = summary.history;
 
       lastRows = history.rows;
       lastRange = [start, end];
@@ -478,7 +490,6 @@
       drawTrend(lastRows, start, end);
       renderStations(summary.stations || {});
       renderMaintenance(summary.maintenance || []);
-      renderMaintenanceHistory(maintenanceHistory.commands || [], start, end);
       updateDemoBanner(summary.stations || {});
       renderEvents(summary.events || []);
       updateLineSummary(summary.line || {});
@@ -502,21 +513,10 @@
   async function applyQuickRange(hours) {
     activeQuickHours = hours;
     setQuickButton(hours);
-    try {
-      const live = await populateStations();
-      const timestamps = Object.values(live)
-        .map(item => new Date(item.timestamp).getTime())
-        .filter(Number.isFinite);
-      const latest = timestamps.length ? Math.max(...timestamps) : Date.now();
-      const end = new Date(latest + 1000);
-      $('to').value = dateInput(end);
-      $('from').value = dateInput(new Date(end.getTime() - hours * 3600000));
-      await load();
-    } catch (error) {
-      if (error.name !== 'AbortError') {
-        $('updated').textContent = `Nu s-a putut determina ultima telemetrie: ${error.message}`;
-      }
-    }
+    const end = new Date();
+    $('to').value = dateInput(end);
+    $('from').value = dateInput(new Date(end.getTime() - hours * 3600000));
+    await load();
   }
 
   document.querySelectorAll('[data-hours]').forEach(button => {
@@ -557,10 +557,10 @@
     if (lastRange.length) drawTrend(lastRows, lastRange[0], lastRange[1]);
   });
 
+  populateStations().catch(() => {});
   applyQuickRange(24);
   setInterval(() => {
     if (activeQuickHours !== null) applyQuickRange(activeQuickHours);
     else load();
   }, 30000);
 })();
-

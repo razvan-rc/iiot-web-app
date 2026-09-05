@@ -4,9 +4,27 @@ import json
 import math
 import os
 import hmac
+import gzip
 from datetime import datetime, timezone
 
 app = Flask(__name__)
+
+
+@app.after_request
+def compress_response(response):
+    # Compress large JSON responses before sending them over the public network.
+    if (request.accept_encodings['gzip'] > 0 and response.status_code == 200
+            and response.mimetype == 'application/json'
+            and not response.direct_passthrough
+            and not response.headers.get('Content-Encoding')):
+        response.vary.add('Accept-Encoding')
+        body = response.get_data()
+        if len(body) >= 1024:
+            response.set_data(gzip.compress(body, compresslevel=4))
+            response.headers['Content-Encoding'] = 'gzip'
+    elif response.mimetype == 'application/json':
+        response.vary.add('Accept-Encoding')
+    return response
 
 STATION_METRICS = {
     'Bottling': {'flow_ml_s': 'ml/s', 'fill_volume_ml': 'ml', 'fill_error_ml': 'ml', 'valve_open_time_s': 's', 'tank_level_ml': 'ml', 'tank_level_pct': '%'},
@@ -60,6 +78,10 @@ def get_db_connection(write=False):
         database=DB_NAME,
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=write,
+        connect_timeout=5,
+        read_timeout=20,
+        write_timeout=10,
+        init_command='SET SESSION max_statement_time=15',
     )
 
 
@@ -279,6 +301,7 @@ def api_history():
 
 
 @app.route('/api/summary')
+@app.route('/api/dashboard')
 def api_summary():
     try:
         start, end, station = query_range()
@@ -290,7 +313,7 @@ def api_summary():
             with conn.cursor() as cursor:
                 cursor.execute(
                     f"""SELECT timestamp, station_name, payload_json
-                        FROM festo_telemetry
+                        FROM festo_telemetry FORCE INDEX (idx_timestamp)
                         WHERE {where}
                           AND COALESCE(JSON_LENGTH(JSON_EXTRACT(payload_json, '$.events')), 0) > 0
                         ORDER BY timestamp DESC
@@ -492,6 +515,28 @@ def api_summary():
             'maintenance': maintenance,
             'events': events[:50],
         }
+        if request.path == '/api/dashboard':
+            # Reuse summary samples: the browser needs only measurements and the
+            # two health fields used by the chart, not thousands of full PLC payloads.
+            result['history'] = {
+                'count': result['count'],
+                'sampled_count': len(sampled_rows),
+                'rows': [
+                    {
+                        'timestamp': row['timestamp'].isoformat() + 'Z',
+                        'station': row['station_name'],
+                        'payload': {
+                            'measurements': payload.get('measurements') or {},
+                            'health': {
+                                'degradation_score': (payload.get('health') or {}).get('degradation_score'),
+                                'demo_mode': bool((payload.get('health') or {}).get('demo_mode')),
+                            },
+                        },
+                    }
+                    for row in sampled_rows
+                    for payload in [json.loads(row['payload_json'])]
+                ],
+            }
         return jsonify(result)
     except (ValueError, TypeError) as e:
         return jsonify({'error': f'Parametri invalizi: {e}'}), 400
