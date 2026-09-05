@@ -1,11 +1,12 @@
 from flask import Flask, render_template, jsonify, request
-import pymysql
 import json
 import math
 import os
 import hmac
 import gzip
 from datetime import datetime, timezone
+
+from database import get_db_connection
 
 app = Flask(__name__)
 
@@ -35,11 +36,6 @@ STATION_METRICS = {
 }
 ACTIVE_STATIONS = tuple(STATION_METRICS)
 
-DB_READER_HOST = os.getenv('DB_READER_HOST', '172.31.45.5')
-DB_WRITER_HOST = os.getenv('DB_WRITER_HOST', '172.31.32.65')
-DB_USER = os.getenv('DB_USER', 'sensor_app')
-DB_PASSWORD = os.getenv('DB_PASSWORD', 'SenzorPass123!')
-DB_NAME = os.getenv('DB_NAME', 'industrial_db')
 MAINTENANCE_CONTROL_TOKEN = os.getenv('MAINTENANCE_CONTROL_TOKEN', '')
 
 MAINTENANCE_POLICIES = {
@@ -68,22 +64,6 @@ def read_latest_payloads():
             return {row['station_name']: json.loads(row['payload_json']) for row in cursor.fetchall()}
     finally:
         conn.close()
-
-def get_db_connection(write=False):
-    # Telemetria și istoricul se citesc din replică; comenzile se scriu numai pe master.
-    return pymysql.connect(
-        host=DB_WRITER_HOST if write else DB_READER_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=DB_NAME,
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=write,
-        connect_timeout=5,
-        read_timeout=20,
-        write_timeout=10,
-        init_command='SET SESSION max_statement_time=15',
-    )
-
 
 def maintenance_projection(name, summary, points):
     latest = summary.get('latest') or {}
