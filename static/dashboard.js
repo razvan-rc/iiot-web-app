@@ -38,6 +38,33 @@
       : Number(row.payload?.measurements?.[metric]);
   }
 
+  function buildDemoOverlaySegments(points, gapThreshold) {
+    const segments = [];
+    for (let index = 0; index < points.length; index++) {
+      if (!points[index].demo) continue;
+
+      const demoStart = index;
+      let demoEnd = index;
+      while (
+        demoEnd + 1 < points.length &&
+        points[demoEnd + 1].demo &&
+        points[demoEnd + 1].time - points[demoEnd].time <= gapThreshold
+      ) {
+        demoEnd++;
+      }
+
+      const hasConnectedEntry = demoStart > 0 &&
+        points[demoStart].time - points[demoStart - 1].time <= gapThreshold;
+      const hasConnectedExit = demoEnd + 1 < points.length &&
+        points[demoEnd + 1].time - points[demoEnd].time <= gapThreshold;
+      const segmentStart = hasConnectedEntry ? demoStart - 1 : demoStart;
+      const segmentEnd = hasConnectedExit ? demoEnd + 1 : demoEnd;
+      segments.push(points.slice(segmentStart, segmentEnd + 1));
+      index = demoEnd;
+    }
+    return segments;
+  }
+
   function updateMetricOptions(rows) {
     const selected = $('trend-metric').value;
     const metrics = new Set(['degradation']);
@@ -136,48 +163,52 @@
       return [name, { gapThreshold, gaps }];
     }));
 
-    $('legend').innerHTML = Object.entries(grouped).map(([name, points], index) => {
+    const demoLegend = allPoints.some(point => point.demo)
+      ? '<span class="legend-item demo-legend">DEMO sintetic</span>'
+      : '';
+    $('legend').innerHTML = Object.entries(grouped).map(([name], index) => {
       const gaps = seriesInfo[name].gaps;
-      const demo = points.some(point => point.demo) ? ' · DEMO punctat' : '';
-      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)}${gaps ? ` · ${gaps} întreruperi` : ''}${demo}</span>`;
-    }).join('');
+      return `<span class="legend-item" style="--legend:${colors[index % colors.length]}">${escapeHtml(name)}${gaps ? ` · ${gaps} întreruperi` : ''}</span>`;
+    }).join('') + demoLegend;
 
     Object.entries(grouped).forEach(([name, points], index) => {
       const color = colors[index % colors.length];
       const gapThreshold = seriesInfo[name].gapThreshold;
+      const baseDataset = points;
+      const demoOverlayDataset = buildDemoOverlaySegments(points, gapThreshold);
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.beginPath();
-      points.forEach((point, pointIndex) => {
+      baseDataset.forEach((point, pointIndex) => {
         const x = xAt(point.time);
         const y = yAt(point.value);
-        const previous = points[pointIndex - 1];
+        const previous = baseDataset[pointIndex - 1];
         if (!previous || point.time - previous.time > gapThreshold) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
         hoverPoints.push({ x, y, name, value: point.value, time: new Date(point.time), unit, demo: point.demo });
       });
       ctx.stroke();
 
-      if (points.some(point => point.demo)) {
+      if (demoOverlayDataset.length) {
         ctx.save();
         ctx.strokeStyle = '#e49b32';
         ctx.lineWidth = 3;
-        ctx.setLineDash([6, 5]);
-        ctx.beginPath();
-        points.forEach((point, pointIndex) => {
-          if (!point.demo) return;
-          const previous = points[pointIndex - 1];
-          const x = xAt(point.time);
-          const y = yAt(point.value);
-          if (!previous?.demo || point.time - previous.time > gapThreshold) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+        ctx.setLineDash([5, 5]);
+        demoOverlayDataset.forEach(segment => {
+          ctx.beginPath();
+          segment.forEach((point, pointIndex) => {
+            const x = xAt(point.time);
+            const y = yAt(point.value);
+            if (pointIndex === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
         });
-        ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = '#e49b32';
-        points.filter(point => point.demo).forEach(point => {
+        baseDataset.filter(point => point.demo).forEach(point => {
           ctx.beginPath();
           ctx.arc(xAt(point.time), yAt(point.value), 2.5, 0, Math.PI * 2);
           ctx.fill();
@@ -185,9 +216,9 @@
         ctx.restore();
       }
 
-      if (points.length <= 80) {
+      if (baseDataset.length <= 80) {
         ctx.fillStyle = color;
-        points.forEach(point => {
+        baseDataset.filter(point => !point.demo).forEach(point => {
           ctx.beginPath();
           ctx.arc(xAt(point.time), yAt(point.value), 2.2, 0, Math.PI * 2);
           ctx.fill();
