@@ -84,10 +84,19 @@ class DashboardPerformanceTests(unittest.TestCase):
 
     def test_station_filter_is_forwarded(self):
         self.params['station'] = 'Bottling'
-        _, read = self.request('/api/dashboard')
+        response, read = self.request('/api/dashboard')
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(read.call_args.args[2], 'Bottling')
+        event_query = self.connection.cursor.return_value.__enter__.return_value.execute.call_args.args[0]
+        self.assertIn('FORCE INDEX (idx_station_time)', event_query)
+        self.assertIn('LIMIT 10000', event_query)
+
+    def test_unfiltered_events_use_timestamp_index(self):
+        response, _ = self.request('/api/dashboard')
+        self.assertEqual(response.status_code, 200)
+        event_query = self.connection.cursor.return_value.__enter__.return_value.execute.call_args.args[0]
+        self.assertIn('FORCE INDEX (idx_timestamp)', event_query)
 
 
 if __name__ == '__main__':
     unittest.main()
-

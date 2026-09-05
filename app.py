@@ -307,15 +307,21 @@ def api_summary():
         start, end, station = query_range()
         sampled_rows = read_sampled_telemetry(start, end, station, resolution=720)
         where, params = range_where(start, end, station)
+        event_index = 'idx_station_time' if station else 'idx_timestamp'
 
         conn = get_db_connection()
         try:
             with conn.cursor() as cursor:
                 cursor.execute(
                     f"""SELECT timestamp, station_name, payload_json
-                        FROM festo_telemetry FORCE INDEX (idx_timestamp)
-                        WHERE {where}
-                          AND COALESCE(JSON_LENGTH(JSON_EXTRACT(payload_json, '$.events')), 0) > 0
+                        FROM (
+                            SELECT timestamp, station_name, payload_json
+                            FROM festo_telemetry FORCE INDEX ({event_index})
+                            WHERE {where}
+                            ORDER BY timestamp DESC
+                            LIMIT 10000
+                        ) recent
+                        WHERE COALESCE(JSON_LENGTH(JSON_EXTRACT(payload_json, '$.events')), 0) > 0
                         ORDER BY timestamp DESC
                         LIMIT 50""",
                     params,
